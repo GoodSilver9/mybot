@@ -10,17 +10,14 @@ from discord.ext import commands
 from disco_token import Token
 from discord import FFmpegPCMAudio
 
-# Intents 설정 (필수)
 intents = discord.Intents.default()
-intents.message_content = True  # 메시지 내용을 읽을 수 있도록 설정
+intents.message_content = True  
 
-# 봇 생성
 client = commands.Bot(command_prefix='./', intents=intents)
 
-# 플레이리스트와 현재 상태 관리
 queue = []  # 재생 대기열
 is_playing = False  # 현재 재생 중인지 여부
-current_voice_client = None  # 현재 연결된 음성 채널
+current_voice_client = None 
 
 # FFmpeg 옵션
 FFMPEG_OPTIONS = {
@@ -48,55 +45,97 @@ async def on_ready():
 
 # 음성 채널 연결 함수
 async def join(ctx):
-    if ctx.author.voice:
-        channel = ctx.author.voice.channel
-        return await channel.connect()
+    if ctx.voice_client is None:  # 봇이 음성 채널에 연결되어 있지 않은 경우
+        if ctx.author.voice:  # 사용자가 음성 채널에 있는지 확인
+            channel = ctx.author.voice.channel
+            await channel.connect()  # 음성 채널에 연결
+            await ctx.send(f"{ctx.author.mention} 음성 채널에 연결되었습니다.")
+        else:
+            await ctx.send("먼저 음성 채널에 접속해주세요.")
+            return None
     else:
-        await ctx.send("먼저 음성 채널에 접속해주세요.")
-        return None
+        await ctx.send(f"{ctx.author.mention} 봇은 이미 음성 채널에 연결되어 있습니다.")
+    return ctx.voice_client  # 이미 연결된 경우 현재 음성 클라이언트를 반환
 
-# 재생 함수 (큐에서 노래를 재생)
-async def play_next(ctx):
-    global is_playing, current_voice_client
 
-    if queue:  # 큐에 노래가 있으면
-        is_playing = True
-        url = queue.pop(0)  # 큐에서 첫 번째 곡을 가져옴
+
+@client.command(aliases=['p'])
+async def play(ctx, url: str = None):
+    voice = ctx.voice_client
+
+    # 봇이 음성 채널에 연결되지 않은 경우 연결
+    if not voice:
+        if ctx.author.voice:  # 사용자가 음성 채널에 있는지 확인
+            channel = ctx.author.voice.channel
+            voice = await channel.connect()
+        else:
+            await ctx.send("먼저 음성 채널에 접속해주세요.")
+            return
+
+    # 일시정지된 상태라면 다시 재생
+    if voice and voice.is_paused():
+        voice.resume()
+        await ctx.send(f"{ctx.author.mention} 일시정지된 음악을 다시 재생합니다.")
+        return
+
+    # 새로운 URL이 입력된 경우
+    if url:
+        # Use youtube_dl to extract the information and the URL for the audio
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             url2 = info['url']
-            source = FFmpegPCMAudio(executable=FFMPEG_OPTIONS['executable'], source=url2, before_options=FFMPEG_OPTIONS['before_options'], options=FFMPEG_OPTIONS['options'])
+            title = info['title']  # Get the title of the song
 
-            if not current_voice_client:
-                current_voice_client = await join(ctx)
-            current_voice_client.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
-            await ctx.send(f"지금 재생 중: {info['title']}")
+            if voice.is_playing():
+                queue.append((url2, title))  
+                await ctx.send(f"'{title}'가 목록에 추가되었습니다! 현재 목록: {len(queue)}개")
+            else:
+                # 재생 중인 곡이 없으면 바로 재생
+                source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
+                voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
+                await ctx.send(f"지금 재생 중: {title}")
     else:
-        is_playing = False
-        if current_voice_client:
-            await current_voice_client.disconnect()
-            current_voice_client = None
+        await ctx.send("URL을 입력해주세요.")
 
-# 노래 추가 및 재생 명령어
 @client.command()
-async def play(ctx, url: str):
+async def skip(ctx):
+    voice = ctx.voice_client  # 현재 서버의 음성 클라이언트 참조
+
+    if voice and voice.is_playing():
+        voice.stop() 
+        await ctx.send("다음 곡으로 넘어갑니다.")
+    else:
+        await ctx.send("현재 재생 중인 곡이 없습니다.")
+
+async def play_next(ctx):
     global is_playing
 
-    queue.append(url)
-    await ctx.send(f"노래가 목록에 추가되었습니다! 현재 목록: {len(queue)}개")
+    if len(queue) == 0:  # 재생할 곡이 없는 경우
+        is_playing = False
+        await ctx.send("재생할 곡이 더 이상 없습니다.")
+        return
 
-    if not is_playing:
-        await play_next(ctx)
+    if ctx.voice_client is None:  # 음성 클라이언트가 없는 경우 연결
+        await join(ctx)
 
-# 현재 목록 확인 명령어
+    is_playing = True
+    url, title = queue.pop(0)  # 큐에서 다음 곡을 꺼냄
+
+    # 다음 곡 재생
+    source = FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
+    ctx.voice_client.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
+    await ctx.send(f"지금 재생 중: {title}")
+
 @client.command()
-async def queue_list(ctx):
+async def q(ctx):
     if queue:
         await ctx.send(f"현재 목록: {len(queue)}개 곡이 대기 중입니다.")
+        titles = [f"{idx + 1}. {item[1]}" for idx, item in enumerate(queue)]
+        await ctx.send("재생 목록:\n" + "\n".join(titles))
     else:
         await ctx.send("현재 재생 목록이 비어 있습니다.")
 
-# 정지 명령어
+
 @client.command()
 async def stop(ctx):
     global is_playing, queue, current_voice_client
@@ -107,15 +146,29 @@ async def stop(ctx):
         await current_voice_client.disconnect()  # 음성 채널에서 나가기
         current_voice_client = None
     await ctx.send("재생이 중단되었습니다.")
+
 @client.command()
-async def skip(ctx):
-    global current_voice_client
+async def pause(ctx):
+    voice = ctx.voice_client  # 현재 음성 클라이언트를 가져옴
 
-    if current_voice_client and current_voice_client.is_playing():
-        current_voice_client.stop()  # 현재 재생 중인 곡을 멈추면 play_next 함수가 자동 호출됨
-        await ctx.send("다음 곡으로 넘어갑니다.")
+    if voice and voice.is_playing():  # 봇이 음성 채널에 연결되어 있고, 재생 중인지 확인
+        voice.pause()  # 재생 중인 곡을 일시정지
+        await ctx.send(f"{ctx.author.mention} 플레이어를 일시정지했습니다.")
     else:
-        await ctx.send("현재 재생 중인 곡이 없습니다.")
+        await ctx.send(f"{ctx.author.mention} 현재 재생 중인 곡이 없습니다.")
+@client.command()
+async def resume(ctx):
+    voice = ctx.voice_client  # 현재 음성 클라이언트를 가져옴
 
-# 봇 실행
+    if voice and voice.is_paused():  # 봇이 음성 채널에 연결되어 있고, 곡이 일시정지 상태인지 확인
+        voice.resume()  # 일시정지된 곡을 다시 재생
+        await ctx.send(f"{ctx.author.mention} 음악을 계속 재생합니다.")
+    else:
+        await ctx.send(f"{ctx.author.mention} 현재 일시정지된 곡이 없습니다.")
+
+
+
+
 client.run(Token)
+
+# ./q 에서 재생목록을 보면현재재생중인것도 뜨게하기
