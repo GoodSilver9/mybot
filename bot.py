@@ -13,7 +13,7 @@ from discord import FFmpegPCMAudio
 intents = discord.Intents.default()
 intents.message_content = True  
 
-client = commands.Bot(command_prefix='./', intents=intents, case_insensitive=True)
+client = commands.Bot(command_prefix='.', intents=intents, case_insensitive=True)
 
 queue = []  # 재생 대기열
 current_track = None  # 현재 재생 중인 곡
@@ -112,7 +112,7 @@ async def q(ctx):
     voice = ctx.voice_client
 
     if current_track:
-        await ctx.send(f"```diff\n+ 현재 재생 중인 곡: {current_track}\n```")
+        await ctx.send(f"현재 재생 중인 곡: {current_track}")
     else:
         await ctx.send("현재 재생 중인 곡이 없습니다.")
 
@@ -171,20 +171,20 @@ async def skip(ctx):
 async def play_next(ctx):
     global is_playing, current_track
 
-    if len(queue) == 0:  # 재생할 곡이 없는 경우
+    if  len(queue) == 0:  # 재생할 곡이 없는 경우
         is_playing = False
         current_track = None
         await ctx.send("재생할 곡이 더 이상 없습니다.")
 
-        # 3분 후 음성 채널 나가기
-        await asyncio.sleep(180)  # 180초 = 3분
-        if not is_playing and ctx.voice_client:  # 여전히 재생 중이 아니라면
-            await ctx.voice_client.disconnect()
-            await ctx.send("3분 동안 아무 곡도 재생되지 나간다잉")
+        # # 3분 후 음성 채널 나가기
+        # await asyncio.sleep(180)
+        # if not is_playing and ctx.voice_client:  # 여전히 재생 중이 아니라면
+        #     await ctx.voice_client.disconnect()
+        #     await ctx.send("3분 동안 아무 곡도 재생되지않으니 나간다잉")
 
         return
 
-    if ctx.voice_client is None:  # 음성 클라이언트가 없는 경우 연결
+    if ctx.voice_client is None:  
         await join(ctx)
 
     is_playing = True
