@@ -3,12 +3,29 @@ import sys
 import os
 import yt_dlp as youtube_dl
 import asyncio
+import requests
+import json
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# 파이썬에서 HTTP 요청 보내는거
+import subprocess
+import base64
+from discord import File
+from PIL import Image
+from io import BytesIO
+
+sys.path.append(r'C:\Coding\smbot')
 
 from discord.ext import commands
+sys.path.append(r'C:\Coding\smbot')
 from disco_token import Token
 from discord import FFmpegPCMAudio
+
+# 딥시크 API
+DEEPSEEK_API_KEY = "sk-27dae9be93c648bb8805a793438f6eb5"
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+
+
+
 
 intents = discord.Intents.default()
 intents.message_content = True  
@@ -39,6 +56,8 @@ ydl_opts = {
     'youtube_include_dash_manifest': False,
 }
 
+
+
 # 봇 준비 이벤트
 @client.event
 async def on_ready():
@@ -49,7 +68,7 @@ async def join(ctx):
     if ctx.voice_client is None:  
         if ctx.author.voice:  
             channel = ctx.author.voice.channel
-            await channel.connect()  # 음성 채널에 연결
+            await channel.connect()  # 음성 채널에 연결``
             await ctx.send(f"{ctx.author.mention} 음성 채널에 연결되었습니다.")
         else:
             await ctx.send("먼저 음성 채널에 접속해주세요.")
@@ -58,6 +77,75 @@ async def join(ctx):
         await ctx.send(f"{ctx.author.mention} 봇은 이미 음성 채널에 연결되어 있습니다.")
     return ctx.voice_client  
 
+
+# Node 스크립트 호출
+def generate_song_card(data):
+    try:
+        # Node.js 스크립트 실행
+        result = subprocess.run(
+            ['node', 'generateCard.js', json.dumps(data)],
+            capture_output=True, text=True
+        )
+        # 오류 메시지 출력
+        if result.stderr:
+            print("STDERR:", result.stderr)
+            return None
+
+        # Base64로 인코딩된 이미지 데이터 디코딩
+        card_image = base64.b64decode(result.stdout.strip())
+        return BytesIO(card_image)
+    except Exception as e:
+        print(f"Error generating song card: {e}")
+        with open(r"C:\Coding\smbot\mybot\default_card.png", "rb") as f:
+            return BytesIO(f.read())
+
+
+def extract_video_id(url):
+    ydl_opts = {}
+    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        return info.get('id')  # video_id 반환
+
+# @client.command()
+# async def songcard(ctx, *, search_or_url: str):
+#     # YouTube에서 곡 정보 가져오기
+#     url, title = await search_youtube(search_or_url)
+#     if not url:
+#         await ctx.send("검색 결과가 없습니다.")
+#         return
+
+#     # song card 데이터 준비
+#     data = {
+#         "imageBg": thumbnail_url,  # YouTube 썸네일 URL
+#         "imageText": title,  # 곡 제목
+#         "songArtist": "아티스트 이름",  # 아티스트 이름 (추가 정보 필요)
+#         "trackDuration": 0,  # 현재 재생 시간 (추가 정보 필요)
+#         "trackTotalDuration": 0,  # 총 재생 시간 (추가 정보 필요)
+#         "trackStream": False,  # 스트리밍 여부
+#     }
+
+#     # song card 생성
+#     card_image = generate_song_card(data)
+#     if card_image:
+#         await ctx.send(file=File(card_image, "card.png"))
+#     else:
+#         await ctx.send("Song card 생성 중 오류가 발생했습니다.")
+
+def convert_webp_to_jpeg(image_url):
+    response = requests.get(image_url)
+    if response.status_code != 200:
+        return None
+    try:
+        image = Image.open(BytesIO(response.content))
+        if image.format == 'WEBP':
+            jpeg_buffer = BytesIO()
+            image.convert('RGB').save(jpeg_buffer, format='JPEG')
+            jpeg_buffer.seek(0)
+            return jpeg_buffer
+        return BytesIO(response.content)
+    except Exception as e:
+        print(f"Image conversion error: {e}")
+        return None
 
 @client.command(aliases=['p'])
 async def play(ctx, *, search_or_url: str = None):  
@@ -80,15 +168,20 @@ async def play(ctx, *, search_or_url: str = None):
         return
 
     if search_or_url:
-        # URL로 입력된 경우
+        # URL로 입력된 경우``
         if search_or_url.startswith("http"):
             # youtube_dl을 사용해 URL에서 정보를 추출
             with youtube_dl.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(search_or_url, download=False)
                 url2 = info['url']
                 title = info.get('title', '알 수 없는 제목')
+                thumbnail_url = info.get('thumbnail')  # YouTube 썸네일 URL
+                video_id = info.get('id')  # video_id 추출
+                thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"  # JPEG 강제 
         else:  # 검색어로 입력된 경우
             url2, title = await search_youtube(search_or_url)
+            video_id = extract_video_id(url2)  # video_id 추출
+            thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"  # 검색어
 
         if not url2:
             await ctx.send("검색 결과가 없습니다.")
@@ -99,10 +192,36 @@ async def play(ctx, *, search_or_url: str = None):
             queue.append((url2, title))  
             await ctx.send(f"'{title}'가 목록에 추가되었습니다! 현재 목록: {len(queue)}개")
         else:
+            data = {
+            "imageBg": thumbnail_url,  # YouTube 썸네일 URL
+            "imageText": title,
+            "songArtist": "아티스트 이름",
+            "trackDuration": 0,
+            "trackTotalDuration": 0,
+            "trackStream": False,
+        }
+        # WebP -> JPEG 변환 시도
+        converted_image = convert_webp_to_jpeg(thumbnail_url)
+        if converted_image:
+            data["imageBg"] = converted_image
+        else:
+            print("Failed to convert image, using default")
+            with open(r"C:\Coding\smbot\mybot\default_card.png", "rb") as f:
+                data["imageBg"] = BytesIO(f.read())
+        # song card 생성
+            card_image = generate_song_card(data)
+            await ctx.send(file=File(card_image, "card.png"))
+
+            # 음악 재생 로직
             source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
             current_track = title
             voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
             await ctx.send(f"지금 재생 중: {title}")
+                    
+            # source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
+            # current_track = title
+            # voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
+            # await ctx.send(f"지금 재생 중: {title}")
     else:
         await ctx.send("URL 또는 검색어를 입력해주세요.")
 
@@ -217,6 +336,53 @@ async def search_youtube(query):
             return first_result['url'], first_result['title']
         else:
             return None, None
+        
+# 번역 함수
+def translate_text(text, target_lang):
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    # 프롬프트 설정 (예: "Translate the following text into Japanese: Hello")
+    prompt = f"Translate the following text into {target_lang}: {text}"
+    data = {
+        "model": "deepseek-chat",  # 사용할 모델 이름 (문서 참고)
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7,  # 창의성 조절 (0 ~ 1)
+        "max_tokens": 1000  # 최대 토큰 수
+    }
+    try:
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data)
+        if response.status_code == 200:
+            # 응답에서 번역된 텍스트 추출
+            translated_text = response.json()["choices"][0]["message"]["content"]
+            return translated_text
+        else:
+            return f"번역 실패: 상태 코드 {response.status_code}, 응답: {response.text}"
+    except Exception as e:
+        return f"API 호출 중 오류 발생: {str(e)}"
+
+# 명령어: 한국어, 영어, 일본어 → 일본어로 번역
+@client.command(name="jp")
+async def translate_to_japanese(ctx, *, text):
+    translated_text = translate_text(text, "Japanese")  # 타겟 언어를 일본어로 설정
+    await ctx.send(f" {translated_text}")
+
+# 명령어: 일본어 → 한국어 번역
+@client.command(name="kr")
+async def translate_to_korean(ctx, *, text):
+    translated_text = translate_text(text, "Korean")  # 타겟 언어를 한국어로 설정
+    await ctx.send(f" {translated_text}")
+
+# 명령어: 한국어 → 영어 번역
+@client.command(name="en")
+async def translate_to_english(ctx, *, text):
+    translated_text = translate_text(text, "English")  # 타겟 언어를 영어로 설정
+    await ctx.send(f" {translated_text}")
+
+
 
 
 
