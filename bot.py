@@ -5,28 +5,30 @@ import yt_dlp as youtube_dl
 import asyncio
 import requests
 import json
-import threading
-import pystray
-# 파이썬에서 HTTP 요청 보내는거
 import subprocess
 import base64
-from discord import File
+from discord import File, FFmpegPCMAudio
 from io import BytesIO
-
-sys.path.append(r'C:\Coding\smbot')
-
+from PIL import Image, ImageDraw
 from discord.ext import commands
-sys.path.append(r'C:\Coding\smbot')
-from disco_token import Token
-from discord import FFmpegPCMAudio
-from PIL import Image
+
+# Token 파일 경로 설정
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
+try:
+    from disco_token import Token
+    print("[디버그] Token 임포트 성공")
+except Exception as e:
+    print(f"[디버그] Token 임포트 실패: {str(e)}")
+    print(f"[디버그] 현재 디렉토리: {os.getcwd()}")
+    print(f"[디버그] sys.path: {sys.path}")
+    sys.exit(1)
 
 # 딥시크 API
 DEEPSEEK_API_KEY = "sk-27dae9be93c648bb8805a793438f6eb5"
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
-
-
-
 
 intents = discord.Intents.default()
 intents.message_content = True  
@@ -59,9 +61,6 @@ ydl_opts = {
     }],
     'youtube_include_dash_manifest': False,
 }
-heal_song = Image.open(r"C:\Coding\smbot\mybot\default_card.png")
-
-
 
 # 봇 준비 이벤트
 @client.event
@@ -81,7 +80,6 @@ async def join(ctx):
     else:
         await ctx.send(f"{ctx.author.mention} 봇은 이미 음성 채널에 연결되어 있습니다.")
     return ctx.voice_client  
-
 
 # Node 스크립트 호출
 def generate_song_card(data):
@@ -105,39 +103,11 @@ def generate_song_card(data):
         with open("default_card.png", "rb") as f:
             return BytesIO(f.read())
 
-
 def extract_video_id(url):
     ydl_opts = {}
     with youtube_dl.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
         return info.get('id')  # video_id 반환
-
-# @client.command()
-# async def songcard(ctx, *, search_or_url: str):
-#     # YouTube에서 곡 정보 가져오기
-#     url, title = await search_youtube(search_or_url)
-#     if not url:
-#         await ctx.send("검색 결과가 없습니다.")
-#         return
-
-#     # song card 데이터 준비
-#     data = {
-#         "imageBg": thumbnail_url,  # YouTube 썸네일 URL
-#         "imageText": title,  # 곡 제목
-#         "songArtist": "아티스트 이름",  # 아티스트 이름 (추가 정보 필요)
-#         "trackDuration": 0,  # 현재 재생 시간 (추가 정보 필요)
-#         "trackTotalDuration": 0,  # 총 재생 시간 (추가 정보 필요)
-#         "trackStream": False,  # 스트리밍 여부
-#     }
-
-#     # song card 생성
-#     card_image = generate_song_card(data)
-#     if card_image:
-#         await ctx.send(file=File(card_image, "card.png"))
-#     else:
-#         await ctx.send("Song card 생성 중 오류가 발생했습니다.")
-
-
 
 @client.command(aliases=['p'])
 async def play(ctx, *, search_or_url: str = None):  
@@ -403,73 +373,12 @@ async def search(ctx, *, query):
     # 결과 출력
     await ctx.send(f"검색 결과: {search_result}")
 
-
-
-
-client.run(Token)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-###############################################
-
-# 시스템 트레이 아이콘 설정
-def create_tray_icon():
-    # 트레이 아이콘 이미지
-    image = Image.open(r"C:\Coding\smbot\mybot\default_card.png")  # 아이콘 이미지 파일 경로
-
-    # 트레이 메뉴
-    menu = (
-        pystray.MenuItem("켜기", turn_on),
-        pystray.MenuItem("끄기", turn_off),
-        pystray.MenuItem("종료", exit_app),
-    )
-
-    # 트레이 아이콘 생성
-    icon = pystray.Icon("MyDiscordBot", image, "My Discord Bot", menu)
-    icon.run()
-
-# 봇 켜기
-def turn_on(icon, item):
-    if not client.is_ready():
-        threading.Thread(target=client.run, args=(Token,)).start()
-        icon.notify("봇이 켜졌습니다.", "My Discord Bot")
-
-# 봇 끄기
-def turn_off(icon, item):
-    if client.is_ready():
-        client.loop.create_task(client.close())
-        icon.notify("봇이 꺼졌습니다.", "My Discord Bot")
-
-# 프로그램 종료
-def exit_app(icon, item):
-    if client.is_ready():
-        client.loop.create_task(client.close())
-    icon.stop()
-    sys.exit()
-
-# 봇 준비 이벤트
-@client.event
-async def on_ready():
-    print(f'Logged in as {client.user}')
-
-# 시스템 트레이 아이콘 실행
 if __name__ == "__main__":
-    # 시스템 트레이 아이콘을 별도 스레드에서 실행
-    tray_thread = threading.Thread(target=create_tray_icon)
-    tray_thread.daemon = True
-    tray_thread.start()
-
-    # 봇 실행
-    client.run(Token)
+    try:
+        client.run(Token)
+    except KeyboardInterrupt:
+        print("봇을 종료합니다...")
+        sys.exit(0)
+    except Exception as e:
+        print(f"오류 발생: {str(e)}")
+        sys.exit(1)
