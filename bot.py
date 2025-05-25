@@ -373,6 +373,59 @@ async def search(ctx, *, query):
     # 결과 출력
     await ctx.send(f"검색 결과: {search_result}")
 
+<<<<<<< HEAD
+=======
+
+
+
+client.run(Token)
+
+
+
+
+
+# 시스템 트레이 아이콘 설정
+def create_tray_icon():
+    # 트레이 아이콘 이미지
+    image = Image.open(r"C:\Coding\smbot\mybot\default_card.png")  # 아이콘 이미지 파일 경로
+
+    # 트레이 메뉴
+    menu = (
+        pystray.MenuItem("켜기", turn_on),
+        pystray.MenuItem("끄기", turn_off),
+        pystray.MenuItem("종료", exit_app),
+    )
+
+    # 트레이 아이콘 생성
+    icon = pystray.Icon("MyDiscordBot", image, "My Discord Bot", menu)
+    icon.run()
+
+# 봇 켜기
+def turn_on(icon, item):
+    if not client.is_ready():
+        threading.Thread(target=client.run, args=(Token,)).start()
+        icon.notify("봇이 켜졌습니다.", "My Discord Bot")
+
+# 봇 끄기
+def turn_off(icon, item):
+    if client.is_ready():
+        client.loop.create_task(client.close())
+        icon.notify("봇이 꺼졌습니다.", "My Discord Bot")
+
+# 프로그램 종료
+def exit_app(icon, item):
+    if client.is_ready():
+        client.loop.create_task(client.close())
+    icon.stop()
+    sys.exit()
+
+# 봇 준비 이벤트
+@client.event
+async def on_ready():
+    print(f'Logged in as {client.user}')
+
+# 시스템 트레이 아이콘 실행
+>>>>>>> f5e298d672a59131c1f370fd57d8b258e1b69273
 if __name__ == "__main__":
     try:
         client.run(Token)
