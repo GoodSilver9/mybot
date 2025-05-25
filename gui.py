@@ -6,80 +6,143 @@ from infi.systray import SysTrayIcon
 import psutil
 import signal
 from PIL import Image, ImageDraw
+import logging
+from datetime import datetime
+import threading
 
 class BotController:
     def __init__(self):
         self.bot_process = None
+        self.setup_logging()
         self.setup_tray()
     
+    def setup_logging(self):
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        log_dir = os.path.join(current_dir, 'logs')
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        
+        log_file = os.path.join(log_dir, f'bot_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(log_file, encoding='utf-8'),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+        self.logger.info("로깅 시스템 초기화 완료")
+
     def start_bot(self, systray):
         if self.bot_process is None or self.bot_process.poll() is not None:
             try:
-                # 현재 스크립트의 디렉토리 경로
                 current_dir = os.path.dirname(os.path.abspath(__file__))
                 bot_path = os.path.join(current_dir, "bot.py")
+                python_exe = os.path.join(os.path.dirname(sys.executable), "python.exe")
                 
-                print(f"[디버그] 현재 디렉토리: {current_dir}")
-                print(f"[디버그] 봇 파일 경로: {bot_path}")
-                print(f"[디버그] Python 실행 파일: {sys.executable}")
+                self.logger.info(f"현재 디렉토리: {current_dir}")
+                self.logger.info(f"봇 파일 경로: {bot_path}")
+                self.logger.info(f"Python 실행 파일: {python_exe}")
                 
                 if not os.path.exists(bot_path):
-                    print(f"오류: {bot_path} 파일을 찾을 수 없습니다.")
+                    self.logger.error(f"오류: {bot_path} 파일을 찾을 수 없습니다.")
                     return
                 
-                # 봇 프로세스 시작 (현재 터미널에서 실행)
-                cmd = f'"{sys.executable}" "{bot_path}"'
-                print(f"[디버그] 실행할 명령어: {cmd}")
+                if not os.path.exists(python_exe):
+                    self.logger.error(f"오류: Python 실행 파일을 찾을 수 없습니다: {python_exe}")
+                    # 대체 경로 시도
+                    python_exe = "python.exe"
+                    self.logger.info(f"대체 Python 경로 사용: {python_exe}")
+                
+                # 봇 프로세스 시작 (숨겨진 창으로 실행)
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                
+                self.logger.info("봇 프로세스 시작 시도...")
                 
                 self.bot_process = subprocess.Popen(
-                    cmd,
-                    shell=True,
+                    [python_exe, bot_path],
+                    startupinfo=startupinfo,
                     cwd=current_dir,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
                 )
                 
                 # 프로세스 상태 확인
-                print(f"[디버그] 프로세스 ID: {self.bot_process.pid}")
-                print(f"[디버그] 프로세스 상태: {self.bot_process.poll()}")
+                self.logger.info(f"프로세스 ID: {self.bot_process.pid}")
+                self.logger.info(f"프로세스 상태: {self.bot_process.poll()}")
                 
-                print("봇이 시작되었습니다.")
+                # 에러 출력 확인
+                stderr_thread = threading.Thread(target=self._monitor_stderr)
+                stderr_thread.daemon = True
+                stderr_thread.start()
+                
+                self.logger.info("봇이 시작되었습니다.")
             except Exception as e:
-                print(f"봇 시작 중 오류 발생: {str(e)}")
+                self.logger.error(f"봇 시작 중 오류 발생: {str(e)}")
                 import traceback
-                traceback.print_exc()
+                self.logger.error(traceback.format_exc())
         else:
-            print("봇이 이미 실행 중입니다.")
+            self.logger.info("봇이 이미 실행 중입니다.")
+    
+    def _monitor_stderr(self):
+        while self.bot_process and self.bot_process.poll() is None:
+            line = self.bot_process.stderr.readline()
+            if line:
+                self.logger.error(f"봇 에러 출력: {line.strip()}")
     
     def stop_bot(self, systray):
         if self.bot_process and self.bot_process.poll() is None:
             try:
-                print(f"[디버그] 종료할 프로세스 ID: {self.bot_process.pid}")
+                self.logger.info(f"종료할 프로세스 ID: {self.bot_process.pid}")
                 
                 # Windows에서 프로세스 트리 종료
                 parent = psutil.Process(self.bot_process.pid)
                 children = parent.children(recursive=True)
                 
+                # 자식 프로세스 먼저 종료
                 for child in children:
-                    print(f"[디버그] 자식 프로세스 종료: {child.pid}")
-                    child.terminate()
+                    try:
+                        self.logger.info(f"자식 프로세스 종료: {child.pid}")
+                        child.terminate()
+                        child.wait(timeout=3)  # 3초 대기
+                    except psutil.TimeoutExpired:
+                        self.logger.warning(f"자식 프로세스 {child.pid} 강제 종료")
+                        child.kill()
+                    except psutil.NoSuchProcess:
+                        pass
                 
-                print(f"[디버그] 부모 프로세스 종료: {parent.pid}")
+                # 부모 프로세스 종료
+                self.logger.info(f"부모 프로세스 종료: {parent.pid}")
                 parent.terminate()
                 
-                # 프로세스가 완전히 종료될 때까지 대기
-                self.bot_process.wait(timeout=5)
-                print("봇이 종료되었습니다.")
-            except Exception as e:
-                print(f"봇 종료 중 오류 발생: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                # 강제 종료
                 try:
-                    self.bot_process.kill()
+                    # 부모 프로세스가 종료될 때까지 최대 5초 대기
+                    self.bot_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.logger.warning("봇 프로세스 강제 종료")
+                    parent.kill()  # 강제 종료
+                
+                self.logger.info("봇이 종료되었습니다.")
+                
+            except Exception as e:
+                self.logger.error(f"봇 종료 중 오류 발생: {str(e)}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+                # 마지막 수단으로 강제 종료
+                try:
+                    if self.bot_process:
+                        self.bot_process.kill()
                 except:
                     pass
-            self.bot_process = None
+            finally:
+                self.bot_process = None
         else:
-            print("실행 중인 봇이 없습니다.")
+            self.logger.info("실행 중인 봇이 없습니다.")
     
     def create_icon(self):
         # PNG 파일을 ICO로 변환

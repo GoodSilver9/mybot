@@ -1,0 +1,74 @@
+2025-05-26 00:20:42,407 - INFO - 로깅 시스템 초기화 완료
+2025-05-26 00:20:42,413 - DEBUG - STREAM b'IHDR' 16 13
+2025-05-26 00:20:42,413 - DEBUG - STREAM b'gAMA' 41 4
+2025-05-26 00:20:42,413 - DEBUG - STREAM b'sRGB' 57 1
+2025-05-26 00:20:42,413 - DEBUG - STREAM b'PLTE' 70 762
+2025-05-26 00:20:42,413 - DEBUG - STREAM b'IDAT' 844 8192
+2025-05-26 00:20:42,416 - DEBUG - Importing AvifImagePlugin
+2025-05-26 00:20:42,416 - DEBUG - Importing BlpImagePlugin
+2025-05-26 00:20:42,416 - DEBUG - Importing BmpImagePlugin
+2025-05-26 00:20:42,416 - DEBUG - Importing BufrStubImagePlugin
+2025-05-26 00:20:42,417 - DEBUG - Importing CurImagePlugin
+2025-05-26 00:20:42,417 - DEBUG - Importing DcxImagePlugin
+2025-05-26 00:20:42,418 - DEBUG - Importing DdsImagePlugin
+2025-05-26 00:20:42,420 - DEBUG - Importing EpsImagePlugin
+2025-05-26 00:20:42,420 - DEBUG - Importing FitsImagePlugin
+2025-05-26 00:20:42,421 - DEBUG - Importing FliImagePlugin
+2025-05-26 00:20:42,421 - DEBUG - Importing FpxImagePlugin
+2025-05-26 00:20:42,421 - DEBUG - Image: failed to import FpxImagePlugin: No module named 'olefile'
+2025-05-26 00:20:42,421 - DEBUG - Importing FtexImagePlugin
+2025-05-26 00:20:42,422 - DEBUG - Importing GbrImagePlugin
+2025-05-26 00:20:42,422 - DEBUG - Importing GifImagePlugin
+2025-05-26 00:20:42,422 - DEBUG - Importing GribStubImagePlugin
+2025-05-26 00:20:42,422 - DEBUG - Importing Hdf5StubImagePlugin
+2025-05-26 00:20:42,422 - DEBUG - Importing IcnsImagePlugin
+2025-05-26 00:20:42,423 - DEBUG - Importing IcoImagePlugin
+2025-05-26 00:20:42,423 - DEBUG - Importing ImImagePlugin
+2025-05-26 00:20:42,424 - DEBUG - Importing ImtImagePlugin
+2025-05-26 00:20:42,424 - DEBUG - Importing IptcImagePlugin
+2025-05-26 00:20:42,424 - DEBUG - Importing JpegImagePlugin
+2025-05-26 00:20:42,424 - DEBUG - Importing Jpeg2KImagePlugin
+2025-05-26 00:20:42,424 - DEBUG - Importing McIdasImagePlugin
+2025-05-26 00:20:42,425 - DEBUG - Importing MicImagePlugin
+2025-05-26 00:20:42,425 - DEBUG - Image: failed to import MicImagePlugin: No module named 'olefile'
+2025-05-26 00:20:42,425 - DEBUG - Importing MpegImagePlugin
+2025-05-26 00:20:42,425 - DEBUG - Importing MpoImagePlugin
+2025-05-26 00:20:42,428 - DEBUG - Importing MspImagePlugin
+2025-05-26 00:20:42,428 - DEBUG - Importing PalmImagePlugin
+2025-05-26 00:20:42,429 - DEBUG - Importing PcdImagePlugin
+2025-05-26 00:20:42,429 - DEBUG - Importing PcxImagePlugin
+2025-05-26 00:20:42,429 - DEBUG - Importing PdfImagePlugin
+2025-05-26 00:20:42,433 - DEBUG - Importing PixarImagePlugin
+2025-05-26 00:20:42,433 - DEBUG - Importing PngImagePlugin
+2025-05-26 00:20:42,433 - DEBUG - Importing PpmImagePlugin
+2025-05-26 00:20:42,433 - DEBUG - Importing PsdImagePlugin
+2025-05-26 00:20:42,433 - DEBUG - Importing QoiImagePlugin
+2025-05-26 00:20:42,433 - DEBUG - Importing SgiImagePlugin
+2025-05-26 00:20:42,434 - DEBUG - Importing SpiderImagePlugin
+2025-05-26 00:20:42,434 - DEBUG - Importing SunImagePlugin
+2025-05-26 00:20:42,434 - DEBUG - Importing TgaImagePlugin
+2025-05-26 00:20:42,434 - DEBUG - Importing TiffImagePlugin
+2025-05-26 00:20:42,434 - DEBUG - Importing WebPImagePlugin
+2025-05-26 00:20:42,435 - DEBUG - Importing WmfImagePlugin
+2025-05-26 00:20:42,435 - DEBUG - Importing XbmImagePlugin
+2025-05-26 00:20:42,436 - DEBUG - Importing XpmImagePlugin
+2025-05-26 00:20:42,436 - DEBUG - Importing XVThumbImagePlugin
+2025-05-26 00:20:45,344 - INFO - 현재 디렉토리: C:\Coding\smbot\mybot
+2025-05-26 00:20:45,344 - INFO - 봇 파일 경로: C:\Coding\smbot\mybot\bot.py
+2025-05-26 00:20:45,344 - INFO - Python 실행 파일: C:\Users\dltmd\AppData\Local\Programs\Python\Python312\python.exe
+2025-05-26 00:20:45,344 - INFO - 봇 프로세스 시작 시도...
+2025-05-26 00:20:45,348 - INFO - 프로세스 ID: 24600
+2025-05-26 00:20:45,348 - INFO - 프로세스 상태: None
+2025-05-26 00:20:45,348 - INFO - 봇이 시작되었습니다.
+2025-05-26 00:20:45,885 - ERROR - 봇 에러 출력: [2025-05-26 00:20:45] [INFO    ] discord.client: logging in using static token
+2025-05-26 00:20:47,442 - ERROR - 봇 에러 출력: [2025-05-26 00:20:47] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: c55759c70f739a18fbfeac7b95c2a6b0).
+2025-05-26 00:20:51,257 - ERROR - 봇 에러 출력: [2025-05-26 00:20:51] [INFO    ] discord.voice_client: Connecting to voice...
+2025-05-26 00:20:51,257 - ERROR - 봇 에러 출력: [2025-05-26 00:20:51] [INFO    ] discord.voice_client: Starting voice handshake... (connection attempt 1)
+2025-05-26 00:20:51,637 - ERROR - 봇 에러 출력: [2025-05-26 00:20:51] [INFO    ] discord.voice_client: Voice handshake complete. Endpoint found south-korea1119.discord.media
+2025-05-26 00:20:58,758 - INFO - 종료할 프로세스 ID: 24600
+2025-05-26 00:20:58,765 - INFO - 자식 프로세스 종료: 15144
+2025-05-26 00:20:58,772 - INFO - 자식 프로세스 종료: 23108
+2025-05-26 00:20:58,780 - INFO - 자식 프로세스 종료: 9388
+2025-05-26 00:20:58,780 - INFO - 부모 프로세스 종료: 24600
+2025-05-26 00:20:58,786 - INFO - 봇이 종료되었습니다.
+2025-05-26 00:21:10,399 - INFO - 실행 중인 봇이 없습니다.
