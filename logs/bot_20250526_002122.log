@@ -65,3 +65,12 @@
 2025-05-26 00:21:30,124 - ERROR - 봇 에러 출력: [2025-05-26 00:21:30] [INFO    ] discord.voice_client: Connecting to voice...
 2025-05-26 00:21:30,124 - ERROR - 봇 에러 출력: [2025-05-26 00:21:30] [INFO    ] discord.voice_client: Starting voice handshake... (connection attempt 1)
 2025-05-26 00:21:30,500 - ERROR - 봇 에러 출력: [2025-05-26 00:21:30] [INFO    ] discord.voice_client: Voice handshake complete. Endpoint found south-korea1119.discord.media
+2025-05-26 00:24:07,444 - ERROR - 봇 에러 출력: [tls @ 00000167868522c0] Unable to read from socket
+2025-05-26 00:24:07,444 - ERROR - 봇 에러 출력: [https @ 00000167869127c0] Will reconnect at 2637808 in 0 second(s), error=Error number -10054 occurred.
+2025-05-26 00:24:07,480 - ERROR - 봇 에러 출력: [tls @ 00000167868522c0] Failed to send close message
+2025-05-26 00:24:13,882 - INFO - 종료할 프로세스 ID: 408
+2025-05-26 00:24:13,889 - INFO - 자식 프로세스 종료: 15004
+2025-05-26 00:24:13,896 - INFO - 자식 프로세스 종료: 8960
+2025-05-26 00:24:13,904 - INFO - 자식 프로세스 종료: 17188
+2025-05-26 00:24:13,904 - INFO - 부모 프로세스 종료: 408
+2025-05-26 00:24:13,910 - INFO - 봇이 종료되었습니다.

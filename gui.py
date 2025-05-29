@@ -15,6 +15,8 @@ class BotController:
         self.bot_process = None
         self.setup_logging()
         self.setup_tray()
+        # 프로그램 시작 시 자동으로 봇 시작
+        self.start_bot(None)
     
     def setup_logging(self):
         current_dir = os.path.dirname(os.path.abspath(__file__))

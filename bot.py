@@ -368,8 +368,8 @@ async def search(ctx, *, query):
     # 검색 및 요약 실행
     search_result = search_and_summarize(query)
     # 출력 길이 제한 (예: 200자)
-    if len(search_result) > 200:
-        search_result = search_result[:200] + "..."
+    if len(search_result) > 1500:
+        search_result = search_result[:1500] + "..."
     # 결과 출력
     await ctx.send(f"검색 결과: {search_result}")
 
