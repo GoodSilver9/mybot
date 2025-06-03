@@ -9,10 +9,13 @@ from PIL import Image, ImageDraw
 import logging
 from datetime import datetime
 import threading
+import time
 
 class BotController:
     def __init__(self):
         self.bot_process = None
+        self.error_count = 0
+        self.last_error_time = time.time()
         self.setup_logging()
         self.setup_tray()
         # 프로그램 시작 시 자동으로 봇 시작
@@ -96,7 +99,32 @@ class BotController:
             line = self.bot_process.stderr.readline()
             if line:
                 self.logger.error(f"봇 에러 출력: {line.strip()}")
-    
+                current_time = time.time()
+                
+                # 에러가 발생한 경우
+                if "error" in line.lower() or "exception" in line.lower():
+                    # 마지막 에러로부터 10초 이내에 발생한 에러인 경우
+                    if current_time - self.last_error_time <= 10:
+                        self.error_count += 1
+                        # 10초 이내에 3번 이상의 에러가 발생한 경우
+                        if self.error_count >= 3:
+                            self.logger.warning("10초 이내에 3번 이상의 에러가 발생하여 봇을 재시작합니다.")
+                            self.restart_bot()
+                            return
+                    else:
+                        # 10초가 지난 경우 에러 카운트 초기화
+                        self.error_count = 1
+                    
+                    self.last_error_time = current_time
+
+    def restart_bot(self):
+        self.logger.info("봇 재시작 시도...")
+        self.stop_bot(None)
+        time.sleep(2)  # 프로세스가 완전히 종료될 때까지 대기
+        self.start_bot(None)
+        self.error_count = 0
+        self.last_error_time = time.time()
+
     def stop_bot(self, systray):
         if self.bot_process and self.bot_process.poll() is None:
             try:
