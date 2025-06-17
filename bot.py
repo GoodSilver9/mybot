@@ -76,7 +76,7 @@ async def join(ctx):
             await channel.connect()  # 음성 채널에 연결``
             await ctx.send(f"{ctx.author.mention} 음성 채널에 연결되었습니다.")
         else:
-            await ctx.send("먼저 음성 채널에 접속해주세요.")
+            await ctx.send("```먼저 음성 채널에 접속해주세요.```")
             return None
     else:
         await ctx.send(f"{ctx.author.mention} 봇은 이미 음성 채널에 연결되어 있습니다.")
@@ -127,13 +127,13 @@ async def play(ctx, *, search_or_url: str = None):
             channel = ctx.author.voice.channel
             voice = await channel.connect()
         else:
-            await ctx.send("먼저 음성 채널에 접속해주세요.")
+            await ctx.send("```먼저 음성 채널에 접속해주세요.```")
             return
 
     # 일시정지된 상태라면 다시 재생
     if voice and voice.is_paused():
         voice.resume()
-        await ctx.send(f"{ctx.author.mention} 일시정지된 음악을 다시 재생합니다.")
+        await ctx.send(f"```{ctx.author.mention} 일시정지된 음악을 다시 재생합니다.```")
         return
 
     if search_or_url:
@@ -153,7 +153,7 @@ async def play(ctx, *, search_or_url: str = None):
                         info = ydl.extract_info(search_or_url, download=False)
                         if 'entries' in info:
                             if len(info['entries']) > 10:
-                                await ctx.send("플레이리스트는 최대 10개의 곡까지만 지원합니다. 더 적은 수의 곡을 선택해주세요.")
+                                await ctx.send("```플레이리스트는 최대 10개의 곡까지만 지원합니다. 더 적은 수의 곡을 선택해주세요.```")
                                 return
                     except:
                         pass  # 플레이리스트가 아닌 경우 무시
@@ -173,13 +173,13 @@ async def play(ctx, *, search_or_url: str = None):
                 video_id = extract_video_id(url2)  # video_id 추출
 
             if not url2:
-                await ctx.send("검색 결과가 없습니다.")
+                await ctx.send("```검색 결과가 없습니다.```")
                 return
 
             # 현재 곡이 재생 중이라면 큐에 추가
             if voice.is_playing():
                 queue.append((url2, title))  
-                await ctx.send(f"'{title}'가 목록에 추가되었습니다! 현재 목록: {len(queue)}개")
+                await ctx.send(f"```'{title}'가 목록에 추가되었습니다! 현재 목록: {len(queue)}개```")
             else:
                 data = {
                     "imageText": title,
@@ -193,13 +193,13 @@ async def play(ctx, *, search_or_url: str = None):
                 source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
                 current_track = title
                 voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
-                await ctx.send(f"지금 재생 중: {title}")
+                await ctx.send(f"```지금 재생 중: {title}```")
 
         except Exception as e:
-            await ctx.send(f"음악을 재생할 수 없습니다. 오류: {str(e)}")
+            await ctx.send(f"```음악을 재생할 수 없습니다. 오류: {str(e)}```")
             return
     else:
-        await ctx.send("URL 또는 검색어를 입력해주세요.")
+        await ctx.send("```URL 또는 검색어를 입력해주세요.```")
 
 @client.command()
 async def q(ctx):
@@ -207,16 +207,16 @@ async def q(ctx):
     voice = ctx.voice_client
 
     if current_track:
-        await ctx.send(f"현재 재생 중인 곡: {current_track}")
+        await ctx.send(f"```현재 재생 중인 곡: {current_track}```")
     else:
-        await ctx.send("현재 재생 중인 곡이 없습니다.")
+        await ctx.send("```현재 재생 중인 곡이 없습니다.```")
 
     
     if queue:
         titles = [f"{idx + 1}. {item[1]}" for idx, item in enumerate(queue)]
-        await ctx.send("재생 목록:\n" + "\n".join(titles))
+        await ctx.send("```재생 목록:\n" + "\n".join(titles) + "```")
     else:
-        await ctx.send("현재 재생 목록이 비어 있습니다.")
+        await ctx.send("```현재 재생 목록이 비어 있습니다.```")
 
 @client.command()
 async def stop(ctx):
@@ -230,9 +230,9 @@ async def stop(ctx):
 
     if voice and voice.is_connected():
         await voice.disconnect()  # 음성 채널에서 나가기
-        await ctx.send("재생이 중단되었습니다. 음성 채널에서 나갑니다.")
+        await ctx.send("```재생이 중단되었습니다. 음성 채널에서 나갑니다.```")
     else:
-        await ctx.send("봇이 음성 채널에 연결되어 있지 않습니다.")
+        await ctx.send("```봇이 음성 채널에 연결되어 있지 않습니다.```")
 
 @client.command()
 async def pause(ctx):
@@ -240,18 +240,19 @@ async def pause(ctx):
 
     if voice and voice.is_playing():  
         voice.pause()  
-        await ctx.send(f"{ctx.author.mention} 플레이어를 일시정지했습니다.")
+        await ctx.send(f"```{ctx.author.mention} 플레이어를 일시정지했습니다.```")
     else:
-        await ctx.send(f"{ctx.author.mention} 현재 재생 중인 곡이 없습니다.")
+        await ctx.send(f"```{ctx.author.mention} 현재 재생 중인 곡이 없습니다.```")
+
 @client.command()
 async def resume(ctx):
     voice = ctx.voice_client  
 
     if voice and voice.is_paused():  
         voice.resume() 
-        await ctx.send(f"{ctx.author.mention} 음악을 계속 재생합니다.")
+        await ctx.send(f"```{ctx.author.mention} 음악을 계속 재생합니다.```")
     else:
-        await ctx.send(f"{ctx.author.mention} 현재 일시정지된 곡이 없습니다.")
+        await ctx.send(f"```{ctx.author.mention} 현재 일시정지된 곡이 없습니다.```")
 
 @client.command()
 async def skip(ctx):
@@ -259,9 +260,9 @@ async def skip(ctx):
 
     if voice and voice.is_playing():
         voice.stop() 
-        await ctx.send("다음 곡으로 넘어갑니다.")
+        await ctx.send("```다음 곡으로 넘어갑니다.```")
     else:
-        await ctx.send("현재 재생 중인 곡이 없습니다.")
+        await ctx.send("```현재 재생 중인 곡이 없습니다.```")
 
 async def play_next(ctx):
     global is_playing, current_track, disconnect_task
@@ -269,7 +270,7 @@ async def play_next(ctx):
     if len(queue) == 0:  # 재생할 곡이 없는 경우
         is_playing = False
         current_track = None
-        await ctx.send("재생할 곡이 더 이상 없습니다.")
+        await ctx.send("```재생할 곡이 더 이상 없습니다.```")
         
         # 5분 후 자동 퇴장 타이머 설정
         async def disconnect_after_timeout():
@@ -277,7 +278,7 @@ async def play_next(ctx):
                 await asyncio.sleep(300)  # 5분 대기
                 if ctx.voice_client and not is_playing:
                     await ctx.voice_client.disconnect()
-                    await ctx.send("5분 동안 아무 곡도 재생되지 않아 음성 채널에서 나갑니다.")
+                    await ctx.send("```5분 동안 아무 곡도 재생되지 않아 음성 채널에서 나갑니다.```")
             except asyncio.CancelledError:
                 pass  # 타이머가 취소된 경우
         
@@ -299,7 +300,7 @@ async def play_next(ctx):
     # 다음 곡 재생
     source = FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
     ctx.voice_client.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
-    await ctx.send(f"지금 재생 중: {title}")
+    await ctx.send(f"```지금 재생 중: {title}```")
 
 async def search_youtube(query):
     ydl_opts_search = {
@@ -381,19 +382,19 @@ def search_and_summarize(query):
 @client.command(name="jp")
 async def translate_to_japanese(ctx, *, text):
     translated_text = translate_text(text, "Japanese")  # 타겟 언어를 일본어로 설정
-    await ctx.send(f" {translated_text}")
+    await ctx.send(f"```{translated_text}```")
 
 # 명령어: 일본어 → 한국어 번역
 @client.command(name="kr")
 async def translate_to_korean(ctx, *, text):
     translated_text = translate_text(text, "Korean")  # 타겟 언어를 한국어로 설정
-    await ctx.send(f" {translated_text}")
+    await ctx.send(f"```{translated_text}```")
 
 # 명령어: 한국어 → 영어 번역
 @client.command(name="en")
 async def translate_to_english(ctx, *, text):
     translated_text = translate_text(text, "English")  # 타겟 언어를 영어로 설정
-    await ctx.send(f" {translated_text}")
+    await ctx.send(f"```{translated_text}```")
 
 @client.command(name="search")
 async def search(ctx, *, query):
@@ -403,7 +404,7 @@ async def search(ctx, *, query):
     if len(search_result) > 1500:
         search_result = search_result[:1500] + "..."
     # 결과 출력
-    await ctx.send(f"검색 결과: {search_result}")
+    await ctx.send(f"```검색 결과: {search_result}```")
 
 if __name__ == "__main__":
     try:
