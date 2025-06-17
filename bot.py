@@ -137,52 +137,67 @@ async def play(ctx, *, search_or_url: str = None):
         return
 
     if search_or_url:
-        # URL로 입력된 경우``
-        if search_or_url.startswith("http"):
-            # youtube_dl을 사용해 URL에서 정보를 추출
-            with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(search_or_url, download=False)
-                url2 = info['url']
-                title = info.get('title', '알 수 없는 제목')
-                thumbnail_url = info.get('thumbnail')  # YouTube 썸네일 URL
-                video_id = info.get('id')  # video_id 추출
-        else:  # 검색어로 입력된 경우
-            url2, title = await search_youtube(search_or_url)
-            video_id = extract_video_id(url2)  # video_id 추출
+        try:
+            # URL로 입력된 경우
+            if search_or_url.startswith("http"):
+                # 플레이리스트 항목 수 확인을 위한 옵션
+                playlist_opts = {
+                    'quiet': True,
+                    'extract_flat': True,  # 플레이리스트 항목만 추출
+                    'noplaylist': False
+                }
+                
+                # 먼저 플레이리스트 정보만 확인
+                with youtube_dl.YoutubeDL(playlist_opts) as ydl:
+                    try:
+                        info = ydl.extract_info(search_or_url, download=False)
+                        if 'entries' in info:
+                            if len(info['entries']) > 10:
+                                await ctx.send("플레이리스트는 최대 10개의 곡까지만 지원합니다. 더 적은 수의 곡을 선택해주세요.")
+                                return
+                    except:
+                        pass  # 플레이리스트가 아닌 경우 무시
 
-        if not url2:
-            await ctx.send("검색 결과가 없습니다.")
-            return
-
-        # 현재 곡이 재생 중이라면 큐에 추가
-        if voice.is_playing():
-            queue.append((url2, title))  
-            await ctx.send(f"'{title}'가 목록에 추가되었습니다! 현재 목록: {len(queue)}개")
-        else:
-            
-            data = {
-            # "imageBg": heal_song, 
-            "imageText": title,
-            "songArtist": "아티스트 이름",
-            "trackDuration": 0,
-            "trackTotalDuration": 0,
-            "trackStream": False,
-        }
-
-        # # song card 생성
-        #     card_image = generate_song_card(data)
-        #     await ctx.send(file=File(card_image, "card.png"))
-
-            # 음악 재생 로직
-            source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
-            current_track = title
-            voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
-            await ctx.send(f"지금 재생 중: {title}")
+                # 실제 음악 정보 추출
+                with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(search_or_url, download=False)
+                    if 'entries' in info:
+                        info = info['entries'][0]  # 첫 번째 항목만 사용
                     
-            # source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
-            # current_track = title
-            # voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
-            # await ctx.send(f"지금 재생 중: {title}")
+                    url2 = info['url']
+                    title = info.get('title', '알 수 없는 제목')
+                    thumbnail_url = info.get('thumbnail')  # YouTube 썸네일 URL
+                    video_id = info.get('id')  # video_id 추출
+            else:  # 검색어로 입력된 경우
+                url2, title = await search_youtube(search_or_url)
+                video_id = extract_video_id(url2)  # video_id 추출
+
+            if not url2:
+                await ctx.send("검색 결과가 없습니다.")
+                return
+
+            # 현재 곡이 재생 중이라면 큐에 추가
+            if voice.is_playing():
+                queue.append((url2, title))  
+                await ctx.send(f"'{title}'가 목록에 추가되었습니다! 현재 목록: {len(queue)}개")
+            else:
+                data = {
+                    "imageText": title,
+                    "songArtist": "아티스트 이름",
+                    "trackDuration": 0,
+                    "trackTotalDuration": 0,
+                    "trackStream": False,
+                }
+
+                # 음악 재생 로직
+                source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
+                current_track = title
+                voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
+                await ctx.send(f"지금 재생 중: {title}")
+
+        except Exception as e:
+            await ctx.send(f"음악을 재생할 수 없습니다. 오류: {str(e)}")
+            return
     else:
         await ctx.send("URL 또는 검색어를 입력해주세요.")
 
