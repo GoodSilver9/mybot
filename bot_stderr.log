@@ -1,4 +1,0 @@
-[2025-05-25 13:47:31] [INFO    ] discord.client: logging in using static token
-[2025-05-25 13:47:32] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: f9230805416232b3ec8c35146b8a5839).
-[2025-05-25 14:12:50] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session f9230805416232b3ec8c35146b8a5839.
-^C

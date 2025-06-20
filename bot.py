@@ -17,17 +17,53 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-try:
-    from disco_token import Token
-    print("[디버그] Token 임포트 성공")
-except Exception as e:
-    print(f"[디버그] Token 임포트 실패: {str(e)}")
-    print(f"[디버그] 현재 디렉토리: {os.getcwd()}")
-    print(f"[디버그] sys.path: {sys.path}")
-    sys.exit(1)
+# env_tokens.txt 파일에서 토큰 읽기
+def load_tokens_from_file():
+    tokens = {}
+    env_file_path = os.path.join(parent_dir, 'env_tokens.txt')
+    
+    try:
+        with open(env_file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    tokens[key] = value
+        return tokens
+    except FileNotFoundError:
+        print(f"[오류] env_tokens.txt 파일을 찾을 수 없습니다: {env_file_path}")
+        return {}
+    except Exception as e:
+        print(f"[오류] env_tokens.txt 파일 읽기 실패: {str(e)}")
+        return {}
+
+# 토큰 로드
+tokens = load_tokens_from_file()
+TOKEN = tokens.get('DISCORD_BOT_TOKEN')
+
+# 환경 변수에서 토큰을 먼저 확인
+if not TOKEN:
+    TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+
+# 환경 변수와 파일에서 모두 토큰을 찾을 수 없는 경우
+if not TOKEN:
+    try:
+        from disco_token import Token
+        TOKEN = Token
+        print("[디버그] disco_token.py에서 토큰 임포트 성공")
+    except Exception as e:
+        print(f"[디버그] 모든 토큰 소스에서 실패: {str(e)}")
+        print(f"[디버그] 현재 디렉토리: {os.getcwd()}")
+        print(f"[디버그] sys.path: {sys.path}")
+        print("[경고] 토큰을 찾을 수 없습니다. env_tokens.txt 파일을 확인하세요.")
+        sys.exit(1)
+else:
+    print("[디버그] env_tokens.txt에서 토큰을 로드했습니다.")
 
 # 딥시크 API
-DEEPSEEK_API_KEY = "sk-27dae9be93c648bb8805a793438f6eb5"
+DEEPSEEK_API_KEY = tokens.get('DEEPSEEK_API_KEY', "sk-27dae9be93c648bb8805a793438f6eb5")
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
 intents = discord.Intents.default()
@@ -408,7 +444,7 @@ async def search(ctx, *, query):
 
 if __name__ == "__main__":
     try:
-        client.run(Token)
+        client.run(TOKEN)
     except KeyboardInterrupt:
         print("봇을 종료합니다...")
         # 음성 연결 정리
