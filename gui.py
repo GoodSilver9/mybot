@@ -183,7 +183,7 @@ class BotController:
         if os.path.exists(png_path):
             # PNG 파일 로드 및 크기 조정
             img = Image.open(png_path)
-            img = img.resize((64, 64), Image.Resampling.LANCZOS)
+            img = img.resize((64, 64), Image.LANCZOS)
             
             # RGBA 모드로 변환 (투명도 지원)
             if img.mode != 'RGBA':

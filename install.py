@@ -3,7 +3,7 @@ import sys
 import winreg
 import win32com.client
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageOps
 
 def create_icon():
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -13,7 +13,7 @@ def create_icon():
     if os.path.exists(png_path):
         # PNG 파일 로드 및 크기 조정
         img = Image.open(png_path)
-        img = img.resize((64, 64), Image.Resampling.LANCZOS)
+        img = img.resize((64, 64), Image.LANCZOS)
         
         # RGBA 모드로 변환
         if img.mode != 'RGBA':

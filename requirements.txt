@@ -1,0 +1,53 @@
+# Discord Bot Requirements
+# 최신 버전으로 업데이트된 패키지 목록
+
+# Discord.py - Discord 봇 프레임워크
+discord.py==2.5.2
+
+# HTTP 클라이언트 라이브러리
+aiohttp==3.12.15
+requests==2.32.4
+
+# 이미지 처리
+Pillow==11.3.0
+
+# YouTube 다운로더
+yt-dlp==2025.7.21
+
+# Windows 시스템 관련 (install.py, gui.py용)
+pywin32>=310
+infi.systray>=0.1.12.1
+psutil>=7.0.0
+
+# GUI 관련
+tkinter
+
+# 비동기 지원
+asyncio
+
+# 시스템 관련
+subprocess
+sys
+os
+json
+base64
+winreg
+pathlib
+threading
+time
+logging
+datetime
+
+# 기타 의존성
+aiohappyeyeballs>=2.6.1
+aiosignal>=1.4.0
+attrs>=25.1.0
+frozenlist>=1.5.0
+multidict>=6.1.0
+propcache>=0.2.1
+yarl>=1.18.3
+idna>=3.10
+charset-normalizer>=3.4.1
+urllib3>=2.3.0
+certifi>=2025.1.31
+typing-extensions>=4.14.1
