@@ -105,11 +105,11 @@ is_playing = False  # 현재 재생 중인지 여부
 current_voice_client = None 
 disconnect_task = None  # 자동 퇴장 타이머를 위한 변수
 
-# FFmpeg 옵션
+# FFmpeg 옵션 (안정성 개선)
 FFMPEG_OPTIONS = {
     'executable': 'C:\\Program Files (x86)\\ffmpeg-2024-10-13-git-e347b4ff31-essentials_build\\bin\\ffmpeg.exe',
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -timeout 30000000',
-    'options': '-vn -b:a 128k -bufsize 2048k -maxrate 256k -loglevel error'
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -timeout 30000000 -nostdin',
+    'options': '-vn -b:a 128k -bufsize 4096k -maxrate 256k -loglevel error -avoid_negative_ts make_zero -fflags +discardcorrupt'
 }
 
 # Youtube-dl 옵션
@@ -129,6 +129,21 @@ ydl_opts = {
 @client.event
 async def on_ready():
     print(f'Logged in as {client.user}')
+
+# 음성 연결 상태 모니터링
+@client.event
+async def on_voice_state_update(member, before, after):
+    # 봇이 음성 채널에서 혼자 남겨진 경우 자동 퇴장
+    if member == client.user:
+        return
+    
+    voice_client = client.voice_clients
+    for vc in voice_client:
+        if vc.channel and len(vc.channel.members) == 1:  # 봇만 남은 경우
+            await asyncio.sleep(5)  # 5초 대기 후 확인
+            if len(vc.channel.members) == 1:  # 여전히 혼자면 퇴장
+                await vc.disconnect()
+                print("음성 채널에 혼자 남아 자동 퇴장했습니다.")
 
 # 음성 채널 연결 함수
 async def join(ctx):
@@ -167,10 +182,14 @@ def generate_song_card(data):
             return BytesIO(f.read())
 
 def extract_video_id(url):
-    ydl_opts = {}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        return info.get('id')  # video_id 반환
+    ydl_opts = {'quiet': True, 'no_warnings': True}
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            return info.get('id') if info else None
+    except Exception as e:
+        print(f"video_id 추출 중 오류: {e}")
+        return None
 
 @client.command(aliases=['p'])
 async def play(ctx, *, search_or_url: str = None):  
@@ -296,8 +315,13 @@ async def play(ctx, *, search_or_url: str = None):
                         video_id = info.get('id')  # video_id 추출
             else:  # 검색어로 입력된 경우
                 url2, title = await search_youtube(search_or_url)
+                video_id = None
                 if url2:
-                    video_id = extract_video_id(url2)  # video_id 추출
+                    try:
+                        video_id = extract_video_id(url2)  # video_id 추출
+                    except Exception as e:
+                        print(f"video_id 추출 실패: {e}")
+                        # video_id 없이도 계속 진행
 
             if not url2:
                 await ctx.send("```검색 결과가 없습니다.```")
@@ -323,13 +347,27 @@ async def play(ctx, *, search_or_url: str = None):
 
                 # 음악 재생 로직
                 try:
+                    # 음성 연결 상태 최종 확인
+                    if not voice or not voice.is_connected():
+                        await ctx.send("```음성 연결이 끊어졌습니다. 다시 연결해주세요.```")
+                        return
+                    
                     source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
                     current_track = title
-                    voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
+                    
+                    def after_play(error):
+                        if error:
+                            print(f"재생 완료 후 오류: {error}")
+                        asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop)
+                    
+                    voice.play(source, after=after_play)
                     await ctx.send(f"```지금 재생 중: {title}```")
                 except Exception as play_error:
                     print(f"음악 재생 중 오류: {play_error}")
-                    await ctx.send(f"```음악 재생 중 오류가 발생했습니다: {str(play_error)}```")
+                    await ctx.send(f"```음악 재생 중 오류가 발생했습니다.\n오류: {str(play_error)[:100]}...```")
+                    # 큐에 다음 곡이 있으면 시도
+                    if queue:
+                        await play_next(ctx)
                     return
 
         except Exception as e:
@@ -457,11 +495,17 @@ async def play_next(ctx):
         # 다음 곡 재생
         try:
             source = FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
-            ctx.voice_client.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
+            
+            def after_play(error):
+                if error:
+                    print(f"다음 곡 재생 완료 후 오류: {error}")
+                asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop)
+            
+            ctx.voice_client.play(source, after=after_play)
             await ctx.send(f"```지금 재생 중: {title}```")
         except Exception as play_error:
             print(f"다음 곡 재생 중 오류: {play_error}")
-            await ctx.send(f"```다음 곡 재생 중 오류가 발생했습니다: {str(play_error)}```")
+            await ctx.send(f"```다음 곡 재생 중 오류가 발생했습니다.\n'{title}' 건너뛰고 다음 곡을 재생합니다.```")
             # 오류가 발생한 경우 다음 곡으로 넘어가기
             await play_next(ctx)
     except Exception as e:
@@ -482,14 +526,24 @@ async def search_youtube(query):
             'preferredquality': '192',
         }],
         'youtube_include_dash_manifest': False,
+        'no_warnings': True,
     }
 
-    with yt_dlp.YoutubeDL(ydl_opts_search) as ydl:
-        info = ydl.extract_info(f"ytsearch:{query}", download=False)
-        if 'entries' in info and len(info['entries']) > 0:
-            first_result = info['entries'][0]
-            return first_result['url'], first_result['title']
-        else:
+    # 재시도 로직 (최대 3번)
+    for attempt in range(3):
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts_search) as ydl:
+                info = ydl.extract_info(f"ytsearch:{query}", download=False)
+                if 'entries' in info and len(info['entries']) > 0:
+                    first_result = info['entries'][0]
+                    if first_result and 'url' in first_result and 'title' in first_result:
+                        return first_result['url'], first_result['title']
+                return None, None
+        except Exception as e:
+            print(f"YouTube 검색 중 오류 (시도 {attempt + 1}/3): {e}")
+            if attempt < 2:  # 마지막 시도가 아니면 1초 대기 후 재시도
+                await asyncio.sleep(1)
+                continue
             return None, None
         
 # 번역 함수 (비동기)
