@@ -13,6 +13,30 @@ from io import BytesIO
 from PIL import Image, ImageDraw
 from discord.ext import commands
 
+# yt-dlp 자동 업데이트 함수
+def update_yt_dlp():
+    try:
+        print("[시스템] yt-dlp 업데이트를 확인하는 중...")
+        result = subprocess.run([sys.executable, '-m', 'pip', 'install', '-U', 'yt-dlp'], 
+                              capture_output=True, text=True, timeout=60)
+        
+        if result.returncode == 0:
+            print("[시스템] yt-dlp 업데이트 완료!")
+            return True
+        else:
+            print(f"[경고] yt-dlp 업데이트 실패: {result.stderr}")
+            return False
+    except subprocess.TimeoutExpired:
+        print("[경고] yt-dlp 업데이트 시간 초과 (60초)")
+        return False
+    except Exception as e:
+        print(f"[경고] yt-dlp 업데이트 중 오류: {str(e)}")
+        return False
+
+# 봇 시작 시 yt-dlp 업데이트 실행
+print("[시스템] 봇 시작 중...")
+update_yt_dlp()
+
 # Token 파일 경로 설정
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -627,6 +651,28 @@ async def search(ctx, *, query):
         
     except Exception as e:
         await ctx.send(f"```❌ 검색 중 오류가 발생했습니다: {str(e)}```")
+
+# yt-dlp 수동 업데이트 명령어
+@client.command(name="update")
+async def manual_update(ctx):
+    await ctx.send("```🔄 yt-dlp 업데이트를 시작합니다...```")
+    
+    try:
+        # 비동기로 업데이트 실행
+        def run_update():
+            return update_yt_dlp()
+        
+        # 별도 스레드에서 실행 (블로킹 방지)
+        loop = asyncio.get_event_loop()
+        success = await loop.run_in_executor(None, run_update)
+        
+        if success:
+            await ctx.send("```✅ yt-dlp 업데이트가 완료되었습니다!```")
+        else:
+            await ctx.send("```⚠️ yt-dlp 업데이트에 실패했습니다. 콘솔에서 오류를 확인해주세요.```")
+            
+    except Exception as e:
+        await ctx.send(f"```❌ 업데이트 중 오류가 발생했습니다: {str(e)}```")
 
 if __name__ == "__main__":
     try:
