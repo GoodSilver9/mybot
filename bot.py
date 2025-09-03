@@ -91,6 +91,19 @@ else:
 DEEPSEEK_API_KEY = tokens.get('DEEPSEEK_API_KEY', "sk-27dae9be93c648bb8805a793438f6eb5")
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
+# Spotify API 설정
+SPOTIFY_CLIENT_ID = tokens.get('SPOTIFY_CLIENT_ID', '')
+SPOTIFY_CLIENT_SECRET = tokens.get('SPOTIFY_CLIENT_SECRET', '')
+
+# Spotify 통합 모듈 임포트
+try:
+    from spotify_integration import spotify_api, analyze_emotion_and_recommend
+    SPOTIFY_AVAILABLE = True
+    print("[시스템] Spotify API 통합 모듈 로드 완료")
+except ImportError as e:
+    SPOTIFY_AVAILABLE = False
+    print(f"[경고] Spotify API 통합 모듈 로드 실패: {e}")
+
 intents = discord.Intents.default()
 intents.message_content = True  
 
@@ -705,6 +718,136 @@ async def search(ctx, *, query):
         
     except Exception as e:
         await ctx.send(f"```❌ 검색 중 오류가 발생했습니다: {str(e)}```")
+
+# Spotify 음악 추천 명령어
+@client.command(name="spotify")
+async def spotify_recommend(ctx, *, query: str = None):
+    if not SPOTIFY_AVAILABLE:
+        await ctx.send("```❌ Spotify API가 설정되지 않았습니다.```")
+        return
+    
+    if not query:
+        await ctx.send("```사용법: .spotify <감정 또는 상황>\n예시: .spotify 기분이 좋아\n예시: .spotify 슬플 때 듣고 싶어```")
+        return
+    
+    await ctx.send("```🎵 Spotify에서 음악을 추천받는 중...```")
+    
+    try:
+        # 감정 분석 및 추천
+        recommendations = await analyze_emotion_and_recommend(query, spotify_api)
+        
+        if not recommendations:
+            await ctx.send("```❌ 추천 음악을 찾을 수 없습니다.```")
+            return
+        
+        # 추천 결과 표시
+        embed = discord.Embed(
+            title="🎵 Spotify 음악 추천",
+            description=f"'{query}'에 맞는 음악을 추천해드려요!",
+            color=0x1DB954  # Spotify 그린
+        )
+        
+        for i, track in enumerate(recommendations[:5], 1):
+            duration_min = track['duration_ms'] // 60000
+            duration_sec = (track['duration_ms'] % 60000) // 1000
+            duration_str = f"{duration_min}:{duration_sec:02d}"
+            
+            embed.add_field(
+                name=f"{i}. {track['name']}",
+                value=f"🎤 {track['artist']}\n💿 {track['album']}\n⏱️ {duration_str}\n🔗 [Spotify에서 듣기]({track['external_url']})",
+                inline=False
+            )
+        
+        # 자동 재생 옵션 제공
+        message = await ctx.send(embed=embed)
+        await message.add_reaction('✅')  # 자동 재생
+        await message.add_reaction('❌')  # 취소
+        
+        # 사용자 반응 대기
+        def check(reaction, user):
+            return user == ctx.author and str(reaction.emoji) in ['✅', '❌']
+        
+        try:
+            reaction, user = await client.wait_for('reaction_add', timeout=30.0, check=check)
+            
+            if str(reaction.emoji) == '✅':
+                # 첫 번째 추천 곡을 YouTube에서 검색하여 재생
+                first_track = recommendations[0]
+                search_query = f"{first_track['name']} {first_track['artist']}"
+                
+                await ctx.send(f"```🎵 '{search_query}' 재생을 시작합니다!```")
+                
+                # 기존 play 명령어 로직 사용
+                url2, title = await search_youtube(search_query)
+                if url2:
+                    voice = ctx.voice_client
+                    if not voice or not voice.is_connected():
+                        if ctx.author.voice:
+                            channel = ctx.author.voice.channel
+                            voice = await channel.connect()
+                        else:
+                            await ctx.send("```음성 채널에 먼저 접속해주세요.```")
+                            return
+                    
+                    if voice.is_playing():
+                        queue.append((url2, title))
+                        await ctx.send(f"```'{title}'가 목록에 추가되었습니다!```")
+                    else:
+                        source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
+                        voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
+                        await ctx.send(f"```지금 재생 중: {title}```")
+                else:
+                    await ctx.send("```❌ YouTube에서 해당 곡을 찾을 수 없습니다.```")
+            else:
+                await ctx.send("```자동 재생을 취소했습니다.```")
+                
+        except asyncio.TimeoutError:
+            await ctx.send("```시간이 초과되어 자동 재생이 취소되었습니다.```")
+            
+    except Exception as e:
+        await ctx.send(f"```❌ Spotify 추천 중 오류가 발생했습니다: {str(e)}```")
+
+# Spotify 검색 명령어
+@client.command(name="ssearch")
+async def spotify_search(ctx, *, query: str = None):
+    if not SPOTIFY_AVAILABLE:
+        await ctx.send("```❌ Spotify API가 설정되지 않았습니다.```")
+        return
+    
+    if not query:
+        await ctx.send("```사용법: .ssearch <검색어>\n예시: .ssearch BTS Dynamite```")
+        return
+    
+    await ctx.send("```🔍 Spotify에서 검색 중...```")
+    
+    try:
+        tracks = await spotify_api.search_tracks(query, limit=5)
+        
+        if not tracks:
+            await ctx.send("```❌ 검색 결과가 없습니다.```")
+            return
+        
+        embed = discord.Embed(
+            title="🔍 Spotify 검색 결과",
+            description=f"'{query}' 검색 결과",
+            color=0x1DB954
+        )
+        
+        for i, track in enumerate(tracks, 1):
+            duration_min = track['duration_ms'] // 60000
+            duration_sec = (track['duration_ms'] % 60000) // 1000
+            duration_str = f"{duration_min}:{duration_sec:02d}"
+            
+            embed.add_field(
+                name=f"{i}. {track['name']}",
+                value=f"🎤 {track['artist']}\n💿 {track['album']}\n⏱️ {duration_str}\n🔗 [Spotify에서 듣기]({track['external_url']})",
+                inline=False
+            )
+        
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"```❌ Spotify 검색 중 오류가 발생했습니다: {str(e)}```")
 
 # yt-dlp 수동 업데이트 명령어
 @client.command(name="update")
