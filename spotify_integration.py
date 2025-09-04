@@ -129,16 +129,23 @@ class SpotifyAPI:
                 'market': 'KR'
             }
             
+            # 최소 하나의 seed는 필수
             if seed_genres:
                 params['seed_genres'] = ','.join(seed_genres[:5])
-            if seed_artists:
+            elif seed_artists:
                 params['seed_artists'] = ','.join(seed_artists[:5])
-            if seed_tracks:
+            elif seed_tracks:
                 params['seed_tracks'] = ','.join(seed_tracks[:5])
+            else:
+                # seed가 없으면 기본값 추가
+                params['seed_genres'] = 'pop'
+            
             if target_energy is not None:
                 params['target_energy'] = target_energy
             if target_valence is not None:
                 params['target_valence'] = target_valence
+            
+            print(f"[디버그] Spotify API 요청 파라미터: {params}")
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -146,6 +153,7 @@ class SpotifyAPI:
                     headers=headers,
                     params=params
                 ) as response:
+                    print(f"[디버그] Spotify API 응답 상태: {response.status}")
                     if response.status == 200:
                         data = await response.json()
                         tracks = []
@@ -160,7 +168,8 @@ class SpotifyAPI:
                             })
                         return tracks
                     else:
-                        print(f"추천 실패: {response.status}")
+                        error_text = await response.text()
+                        print(f"추천 실패: {response.status}, 응답: {error_text}")
                         return []
                         
         except Exception as e:
@@ -191,6 +200,87 @@ class SpotifyAPI:
                         
         except Exception as e:
             print(f"장르 목록 가져오기 중 오류: {e}")
+            return []
+
+    async def test_spotify_connection(self) -> bool:
+        """Spotify API 연결 테스트"""
+        if not await self.ensure_token():
+            return False
+            
+        try:
+            headers = {
+                'Authorization': f'Bearer {self.access_token}'
+            }
+            
+            # 간단한 검색 API 테스트
+            params = {
+                'q': 'BTS',
+                'type': 'artist',
+                'limit': 1
+            }
+            
+            print(f"[디버그] Spotify 연결 테스트 시작")
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    'https://api.spotify.com/v1/search',
+                    headers=headers,
+                    params=params
+                ) as response:
+                    print(f"[디버그] 검색 API 응답 상태: {response.status}")
+                    if response.status == 200:
+                        print("[디버그] Spotify API 연결 성공!")
+                        return True
+                    else:
+                        error_text = await response.text()
+                        print(f"[디버그] 검색 API 실패: {response.status}, 응답: {error_text}")
+                        return False
+                        
+        except Exception as e:
+            print(f"[디버그] 연결 테스트 중 오류: {e}")
+            return False
+
+    async def search_and_recommend(self, query: str, limit: int = 5) -> List[Dict]:
+        """검색을 통한 추천 (권한 문제 우회)"""
+        try:
+            headers = {
+                'Authorization': f'Bearer {self.access_token}'
+            }
+            
+            params = {
+                'q': query,
+                'type': 'track',
+                'limit': limit,
+                'market': 'KR'
+            }
+            
+            print(f"[디버그] 검색 기반 추천: {query}")
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    'https://api.spotify.com/v1/search',
+                    headers=headers,
+                    params=params
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        tracks = []
+                        for track in data['tracks']['items']:
+                            tracks.append({
+                                'name': track['name'],
+                                'artist': track['artists'][0]['name'],
+                                'album': track['album']['name'],
+                                'external_url': track['external_urls']['spotify'],
+                                'preview_url': track['preview_url'],
+                                'duration_ms': track['duration_ms']
+                            })
+                        return tracks
+                    else:
+                        print(f"검색 실패: {response.status}")
+                        return []
+                        
+        except Exception as e:
+            print(f"검색 중 오류: {e}")
             return []
 
 # 감정 분석을 위한 간단한 키워드 매핑
@@ -426,37 +516,46 @@ SIMILAR_WORDS = {
 }
 async def analyze_emotion_and_recommend(text: str, spotify_api: SpotifyAPI) -> List[Dict]:
     """텍스트에서 감정을 분석하고 Spotify 추천"""
+    print(f"[디버그] 감정 분석 시작: {text}")
+    
+    # 먼저 연결 테스트
+    if not await spotify_api.test_spotify_connection():
+        print("[디버그] Spotify API 연결 실패")
+        return []
+    
     text_lower = text.lower()
     
+    # 감정에 따른 검색어 매핑
+    emotion_queries = {
+        '기쁨': 'happy korean pop',
+        '슬픔': 'sad korean ballad',
+        '신남': 'energetic korean dance',
+        '잔잔': 'calm korean acoustic',
+        '활기': 'upbeat korean pop',
+        '사랑': 'romantic korean ballad',
+        '설렘': 'excited korean pop',
+        '우울': 'melancholy korean indie',
+        '스트레스': 'relaxing korean chill',
+        '피곤': 'sleepy korean ambient'
+    }
+    
     # 1단계: 정확한 키워드 매칭
-    for emotion, config in EMOTION_KEYWORDS.items():
+    for emotion, query in emotion_queries.items():
         if emotion in text_lower:
-            recommendations = await spotify_api.get_recommendations(
-                seed_genres=config['genres'],
-                target_energy=config['energy'],
-                target_valence=config['valence'],
-                limit=5
-            )
-            return recommendations
+            print(f"[디버그] 정확한 감정 매칭: {emotion}")
+            return await spotify_api.search_and_recommend(query, 5)
     
-    # 2단계: 유사어 매칭
+    # 2단계: 유사어 매칭 (부분 문자열 검색으로 개선)
     for similar_word, emotions in SIMILAR_WORDS.items():
-        if similar_word in text_lower:
-            # 첫 번째 감정으로 추천
-            emotion_config = EMOTION_KEYWORDS[emotions[0]]
-            recommendations = await spotify_api.get_recommendations(
-                seed_genres=emotion_config['genres'],
-                target_energy=emotion_config['energy'],
-                target_valence=emotion_config['valence'],
-                limit=5
-            )
-            return recommendations
+        if similar_word in text_lower:  # 부분 문자열 검색
+            emotion = emotions[0]
+            if emotion in emotion_queries:
+                print(f"[디버그] 유사어 매칭: '{similar_word}' → {emotion}")
+                return await spotify_api.search_and_recommend(emotion_queries[emotion], 5)
     
-    # 3단계: 기본 추천
-    return await spotify_api.get_recommendations(
-        seed_genres=['pop'],
-        limit=5
-    )
+    # 3단계: 기본 검색
+    print("[디버그] 기본 검색으로 fallback")
+    return await spotify_api.search_and_recommend('korean pop', 5)
 
 # 전역 Spotify API 인스턴스
 spotify_api = SpotifyAPI() 
