@@ -91,6 +91,24 @@ else:
 DEEPSEEK_API_KEY = tokens.get('DEEPSEEK_API_KEY', "sk-27dae9be93c648bb8805a793438f6eb5")
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
+# Spotify API 설정
+SPOTIFY_CLIENT_ID = tokens.get('SPOTIFY_CLIENT_ID', '')
+SPOTIFY_CLIENT_SECRET = tokens.get('SPOTIFY_CLIENT_SECRET', '')
+
+# 환경변수로도 설정 (spotify_integration 모듈이 os.getenv() 사용)
+os.environ['SPOTIFY_CLIENT_ID'] = SPOTIFY_CLIENT_ID
+os.environ['SPOTIFY_CLIENT_SECRET'] = SPOTIFY_CLIENT_SECRET
+
+# Spotify 통합 모듈 임포트
+try:
+    from spotify_integration import spotify_api, analyze_emotion_and_recommend
+    SPOTIFY_AVAILABLE = True
+    print("[시스템] Spotify API 통합 모듈 로드 완료")
+    print(f"[디버그] Spotify Client ID: {SPOTIFY_CLIENT_ID[:10]}..." if SPOTIFY_CLIENT_ID else "[경고] Spotify Client ID 없음")
+except ImportError as e:
+    SPOTIFY_AVAILABLE = False
+    print(f"[경고] Spotify API 통합 모듈 로드 실패: {e}")
+
 intents = discord.Intents.default()
 intents.message_content = True  
 
@@ -623,8 +641,8 @@ async def search_and_summarize(query):
             {"role": "system", "content": "당신은 한국어로 답변하는 도움이 되는 AI 어시스턴트입니다. 모든 답변은 반드시 한국어로 작성해주세요."},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.7,  # 창의성 조절 (0 ~ 1)
-        "max_tokens": 2000  # 최대 토큰 수 증가 (더 긴 답변 가능)
+        "temperature": 0.7,
+        "max_tokens": 2000  
     }
     
     # 재시도 로직 (최대 3번)
@@ -706,27 +724,249 @@ async def search(ctx, *, query):
     except Exception as e:
         await ctx.send(f"```❌ 검색 중 오류가 발생했습니다: {str(e)}```")
 
-# yt-dlp 수동 업데이트 명령어
-@client.command(name="update")
-async def manual_update(ctx):
-    await ctx.send("```🔄 yt-dlp 업데이트를 시작합니다...```")
+
+
+
+
+# Spotify 트랙 재생 함수 (이 함수는 유지)
+async def play_spotify_track(ctx, recommendations, track_index):
+    """Spotify 추천 트랙을 YouTube에서 검색하여 재생"""
+    if track_index >= len(recommendations):
+        await ctx.send("```❌ 잘못된 번호입니다.```")
+        return
+    
+    selected_track = recommendations[track_index]
+    search_query = f"{selected_track['name']} {selected_track['artist']}"
+    
+    await ctx.send(f"```�� '{search_query}' 재생을 시작합니다!```")
+    
+    # 기존 play 명령어 로직 사용
+    url2, title = await search_youtube(search_query)
+    if url2:
+        voice = ctx.voice_client
+        if not voice or not voice.is_connected():
+            if ctx.author.voice:
+                channel = ctx.author.voice.channel
+                voice = await channel.connect()
+            else:
+                await ctx.send("```음성 채널에 먼저 접속해주세요.```")
+                return
+        
+        if voice.is_playing():
+            queue.append((url2, title))
+            await ctx.send(f"```'{title}'가 목록에 추가되었습니다!```")
+        else:
+            source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
+            voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
+            await ctx.send(f"```지금 재생 중: {title}```")
+    else:
+        await ctx.send("```❌ YouTube에서 해당 곡을 찾을 수 없습니다.```")
+
+# 감정 기반 음악 추천 명령어 (새로운 .mind)
+@client.command(name="mind")
+async def mind_recommend(ctx, *, query: str = None):
+    if not SPOTIFY_AVAILABLE:
+        await ctx.send("```❌ Spotify API가 설정되지 않았습니다.```")
+        return
+    
+    if not query:
+        await ctx.send("```사용법: .mind <감정 또는 상황>\n예시: .mind 기분이 좋아\n예시: .mind 슬플 때 듣고 싶어```")
+        return
+    
+    await ctx.send("```�� Spotify에서 음악을 추천받는 중...```")
     
     try:
-        # 비동기로 업데이트 실행
-        def run_update():
-            return update_yt_dlp()
+        # 감정 분석 및 추천
+        recommendations = await analyze_emotion_and_recommend(query, spotify_api)
         
-        # 별도 스레드에서 실행 (블로킹 방지)
-        loop = asyncio.get_event_loop()
-        success = await loop.run_in_executor(None, run_update)
+        if not recommendations:
+            await ctx.send("```❌ 추천 음악을 찾을 수 없습니다.```")
+            return
         
-        if success:
-            await ctx.send("```✅ yt-dlp 업데이트가 완료되었습니다!```")
-        else:
-            await ctx.send("```⚠️ yt-dlp 업데이트에 실패했습니다. 콘솔에서 오류를 확인해주세요.```")
+        # 추천 결과를 전역 변수에 저장 (번호 선택용)
+        ctx.bot.last_spotify_recommendations = recommendations
+        
+        # 추천 결과 표시
+        embed = discord.Embed(
+            title="🎵 Spotify 음악 추천",
+            description=f"'{query}'에 맞는 음악을 추천해드려요!\n\n**사용법:**\n✅ 자동 재생 (1번 곡)\n1️⃣~5️⃣ 번호 선택 (여러 개 선택 가능)\n.ps <번호> 명령어\n❌ 취소",
+            color=0x1DB954  # Spotify 그린
+        )
+        
+        for i, track in enumerate(recommendations[:5], 1):
+            duration_min = track['duration_ms'] // 60000
+            duration_sec = (track['duration_ms'] % 60000) // 1000
+            duration_str = f"{duration_min}:{duration_sec:02d}"
+            
+            embed.add_field(
+                name=f"{i}. {track['name']}",
+                value=f"�� {track['artist']}\n�� {track['album']}\n⏱️ {duration_str}\n🔗 [Spotify에서 듣기]({track['external_url']})",
+                inline=False
+            )
+        
+        # 자동 재생 옵션 제공
+        message = await ctx.send(embed=embed)
+        await message.add_reaction('✅')  # 자동 재생
+        await message.add_reaction('❌')  # 취소
+        
+        # 번호 이모지 추가
+        number_emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣']
+        for emoji in number_emojis:
+            await message.add_reaction(emoji)
+        
+        # 사용자 반응 대기 (여러 개 처리)
+        selected_tracks = set()  # 선택된 트랙 번호들
+        
+        def check(reaction, user):
+            return user == ctx.author and str(reaction.emoji) in ['✅', '❌', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣']
+        
+        try:
+            # 15초 동안 반응 대기
+            while True:
+                reaction, user = await client.wait_for('reaction_add', timeout=15.0, check=check)
+                
+                if str(reaction.emoji) == '✅':
+                    # 첫 번째 추천 곡 자동 재생
+                    await play_spotify_track(ctx, recommendations, 0)
+                    break
+                elif str(reaction.emoji) == '❌':
+                    await ctx.send("```자동 재생을 취소했습니다.```")
+                    break
+                elif str(reaction.emoji) in ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣']:
+                    # 번호 선택 재생
+                    track_index = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'].index(str(reaction.emoji))
+                    
+                    if track_index not in selected_tracks:
+                        selected_tracks.add(track_index)
+                        await play_spotify_track(ctx, recommendations, track_index)
+                        
+                        # 선택된 곡이 5개 이상이면 중단
+                        if len(selected_tracks) >= 5:
+                            await ctx.send("```5개 곡이 선택되어 재생을 중단합니다.```")
+                            break
+                    else:
+                        await ctx.send(f"```{track_index + 1}번 곡은 이미 선택되었습니다.```")
+                
+        except asyncio.TimeoutError:
+            if selected_tracks:
+                await ctx.send(f"```시간 초과! {len(selected_tracks)}개 곡이 재생되었습니다.```")
+            else:
+                await ctx.send("```시간이 초과되어 자동 재생이 취소되었습니다.```")
             
     except Exception as e:
-        await ctx.send(f"```❌ 업데이트 중 오류가 발생했습니다: {str(e)}```")
+        await ctx.send(f"```❌ Spotify 추천 중 오류가 발생했습니다: {str(e)}```")
+
+# Spotify 검색 명령어 (새로운 .sp)
+@client.command(name="sp")
+async def spotify_search(ctx, *, query: str = None):
+    if not SPOTIFY_AVAILABLE:
+        await ctx.send("```❌ Spotify API가 설정되지 않았습니다.```")
+        return
+    
+    if not query:
+        await ctx.send("```사용법: .sp <검색어>\n예시: .sp 대부 ost\n예시: .sp BTS Dynamite\n예시: .sp 클래식 음악```")
+        return
+    
+    await ctx.send("```🔍 Spotify에서 검색 중...```")
+    
+    try:
+        tracks = await spotify_api.search_tracks(query, limit=5)
+        
+        if not tracks:
+            await ctx.send("```❌ 검색 결과가 없습니다.```")
+            return
+        
+        # 검색 결과를 전역 변수에 저장
+        ctx.bot.last_spotify_recommendations = tracks
+        
+        embed = discord.Embed(
+            title="🔍 Spotify 검색 결과",
+            description=f"'{query}' 검색 결과\n\n**사용법:**\n✅ 자동 재생 (1번 곡)\n1️⃣~5️⃣ 번호 선택 (여러 개 선택 가능)\n.ps <번호> 명령어\n❌ 취소",
+            color=0x1DB954
+        )
+        
+        for i, track in enumerate(tracks, 1):
+            duration_min = track['duration_ms'] // 60000
+            duration_sec = (track['duration_ms'] % 60000) // 1000
+            duration_str = f"{duration_min}:{duration_sec:02d}"
+            
+            embed.add_field(
+                name=f"{i}. {track['name']}",
+                value=f"�� {track['artist']}\n�� {track['album']}\n⏱️ {duration_str}\n🔗 [Spotify에서 듣기]({track['external_url']})",
+                inline=False
+            )
+        
+        # 자동 재생 옵션 제공
+        message = await ctx.send(embed=embed)
+        await message.add_reaction('✅')  # 자동 재생
+        await message.add_reaction('❌')  # 취소
+        
+        # 번호 이모지 추가
+        number_emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣']
+        for emoji in number_emojis:
+            await message.add_reaction(emoji)
+        
+        # 사용자 반응 대기 (여러 개 처리)
+        selected_tracks = set()  # 선택된 트랙 번호들
+        
+        def check(reaction, user):
+            return user == ctx.author and str(reaction.emoji) in ['✅', '❌', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣']
+        
+        try:
+            # 15초 동안 반응 대기
+            while True:
+                reaction, user = await client.wait_for('reaction_add', timeout=15.0, check=check)
+                
+                if str(reaction.emoji) == '✅':
+                    # 첫 번째 검색 결과 자동 재생
+                    await play_spotify_track(ctx, tracks, 0)
+                    break
+                elif str(reaction.emoji) == '❌':
+                    await ctx.send("```자동 재생을 취소했습니다.```")
+                    break
+                elif str(reaction.emoji) in ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣']:
+                    # 번호 선택 재생
+                    track_index = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'].index(str(reaction.emoji))
+                    
+                    if track_index not in selected_tracks:
+                        selected_tracks.add(track_index)
+                        await play_spotify_track(ctx, tracks, track_index)
+                        
+                        # 선택된 곡이 5개 이상이면 중단
+                        if len(selected_tracks) >= 5:
+                            await ctx.send("```5개 곡이 선택되어 재생을 중단합니다.```")
+                            break
+                    else:
+                        await ctx.send(f"```{track_index + 1}번 곡은 이미 선택되었습니다.```")
+                
+        except asyncio.TimeoutError:
+            if selected_tracks:
+                await ctx.send(f"```시간 초과! {len(selected_tracks)}개 곡이 재생되었습니다.```")
+            else:
+                await ctx.send("```시간이 초과되어 자동 재생이 취소되었습니다.```")
+        
+    except Exception as e:
+        await ctx.send(f"```❌ Spotify 검색 중 오류가 발생했습니다: {str(e)}```")
+
+# 번호로 Spotify 추천 곡 재생 명령어 (업데이트)
+@client.command(name="ps")
+async def play_spotify_by_number(ctx, number: int = None):
+    """번호로 Spotify 추천 곡 재생"""
+    if not hasattr(ctx.bot, 'last_spotify_recommendations'):
+        await ctx.send("```❌ 먼저 .mind 또는 .sp 명령어로 추천을 받아주세요.```")
+        return
+    
+    recommendations = ctx.bot.last_spotify_recommendations
+    
+    if not number:
+        await ctx.send("```사용법: .ps <번호>\n예시: .ps 1 (1번 곡 재생)\n예시: .ps 3 (3번 곡 재생)```")
+        return
+    
+    if number < 1 or number > len(recommendations):
+        await ctx.send(f"```❌ 1~{len(recommendations)} 사이의 번호를 입력해주세요.```")
+        return
+    
+    await play_spotify_track(ctx, recommendations, number - 1)
 
 if __name__ == "__main__":
     try:
