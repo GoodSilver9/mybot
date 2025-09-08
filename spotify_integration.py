@@ -283,6 +283,154 @@ class SpotifyAPI:
             print(f"검색 중 오류: {e}")
             return []
 
+    async def get_similar_tracks(self, track_name: str, artist_name: str, limit: int = 5) -> List[Dict]:
+        """현재 재생 중인 곡과 비슷한 음악 추천"""
+        if not await self.ensure_token():
+            return []
+            
+        try:
+            # 먼저 현재 곡을 검색해서 Spotify ID를 찾기
+            search_query = f"{track_name} {artist_name}"
+            headers = {
+                'Authorization': f'Bearer {self.access_token}'
+            }
+            
+            params = {
+                'q': search_query,
+                'type': 'track',
+                'limit': 1,
+                'market': 'KR'
+            }
+            
+            print(f"[디버그] 비슷한 곡 찾기 - 검색: {search_query}")
+            
+            async with aiohttp.ClientSession() as session:
+                # 1단계: 현재 곡 검색
+                async with session.get(
+                    'https://api.spotify.com/v1/search',
+                    headers=headers,
+                    params=params
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data['tracks']['items']:
+                            track_id = data['tracks']['items'][0]['id']
+                            print(f"[디버그] 곡 ID 찾음: {track_id}")
+                            
+                            # 2단계: 비슷한 곡 추천 (여러 방법 시도)
+                            # 방법 1: seed_tracks만 사용
+                            rec_params = {
+                                'seed_tracks': track_id,
+                                'limit': limit,
+                                'market': 'KR'
+                            }
+                            
+                            async with session.get(
+                                'https://api.spotify.com/v1/recommendations',
+                                headers=headers,
+                                params=rec_params
+                            ) as rec_response:
+                                if rec_response.status == 200:
+                                    rec_data = await rec_response.json()
+                                    tracks = []
+                                    for track in rec_data['tracks']:
+                                        tracks.append({
+                                            'name': track['name'],
+                                            'artist': track['artists'][0]['name'],
+                                            'album': track['album']['name'],
+                                            'external_url': track['external_urls']['spotify'],
+                                            'preview_url': track['preview_url'],
+                                            'duration_ms': track['duration_ms']
+                                        })
+                                    print(f"[디버그] 비슷한 곡 {len(tracks)}개 찾음")
+                                    return tracks
+                                else:
+                                    print(f"[디버그] 추천 API 실패 (seed_tracks): {rec_response.status}")
+                                    
+                                    # 방법 2: 아티스트 기반 추천 시도
+                                    try:
+                                        # 아티스트 ID 찾기
+                                        artist_params = {
+                                            'q': artist_name,
+                                            'type': 'artist',
+                                            'limit': 1,
+                                            'market': 'KR'
+                                        }
+                                        
+                                        async with session.get(
+                                            'https://api.spotify.com/v1/search',
+                                            headers=headers,
+                                            params=artist_params
+                                        ) as artist_response:
+                                            if artist_response.status == 200:
+                                                artist_data = await artist_response.json()
+                                                if artist_data['artists']['items']:
+                                                    artist_id = artist_data['artists']['items'][0]['id']
+                                                    print(f"[디버그] 아티스트 ID 찾음: {artist_id}")
+                                                    
+                                                    # 아티스트 기반 추천
+                                                    artist_rec_params = {
+                                                        'seed_artists': artist_id,
+                                                        'limit': limit,
+                                                        'market': 'KR'
+                                                    }
+                                                    
+                                                    async with session.get(
+                                                        'https://api.spotify.com/v1/recommendations',
+                                                        headers=headers,
+                                                        params=artist_rec_params
+                                                    ) as artist_rec_response:
+                                                        if artist_rec_response.status == 200:
+                                                            artist_rec_data = await artist_rec_response.json()
+                                                            tracks = []
+                                                            for track in artist_rec_data['tracks']:
+                                                                tracks.append({
+                                                                    'name': track['name'],
+                                                                    'artist': track['artists'][0]['name'],
+                                                                    'album': track['album']['name'],
+                                                                    'external_url': track['external_urls']['spotify'],
+                                                                    'preview_url': track['preview_url'],
+                                                                    'duration_ms': track['duration_ms']
+                                                                })
+                                                            print(f"[디버그] 아티스트 기반 비슷한 곡 {len(tracks)}개 찾음")
+                                                            return tracks
+                                                        else:
+                                                            print(f"[디버그] 아티스트 기반 추천 실패: {artist_rec_response.status}")
+                                    except Exception as e:
+                                        print(f"[디버그] 아티스트 기반 추천 중 오류: {e}")
+                                    
+                                    # 방법 3: 검색 기반 추천으로 대체
+                                    print(f"[디버그] 검색 기반 추천으로 대체")
+                                    # 여러 검색어 시도
+                                    search_queries = [
+                                        f"{artist_name} similar",
+                                        f"{artist_name} songs",
+                                        f"{track_name} similar",
+                                        f"{artist_name} popular",
+                                        f"{artist_name} hits"
+                                    ]
+                                    
+                                    for query in search_queries:
+                                        result = await self.search_and_recommend(query, limit)
+                                        if result:
+                                            print(f"[디버그] 검색 성공: {query}")
+                                            return result
+                                    
+                                    # 모든 검색이 실패하면 빈 리스트 반환
+                                    print(f"[디버그] 모든 검색 실패")
+                                    return []
+                        else:
+                            print(f"[디버그] 곡을 찾을 수 없음: {search_query}")
+                            # 곡을 찾을 수 없으면 아티스트로 검색
+                            return await self.search_and_recommend(f"{artist_name} songs", limit)
+                    else:
+                        print(f"[디버그] 검색 실패: {response.status}")
+                        return []
+                        
+        except Exception as e:
+            print(f"[디버그] 비슷한 곡 찾기 중 오류: {e}")
+            return []
+
 # 감정 분석을 위한 간단한 키워드 매핑
 EMOTION_KEYWORDS = {
     # 기본 감정 (8개)
