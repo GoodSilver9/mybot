@@ -806,28 +806,36 @@ async def mind_recommend(ctx, *, query: str = None):
         
         # 자동 재생 옵션 제공
         message = await ctx.send(embed=embed)
-        await message.add_reaction('✅')  # 자동 재생
-        await message.add_reaction('❌')  # 취소
         
-        # 번호 이모지 추가
-        number_emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣']
-        for emoji in number_emojis:
-            await message.add_reaction(emoji)
+        # 모든 이모티콘을 한 번에 추가 (더 빠른 반응을 위해)
+        emojis_to_add = ['✅', '❌', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣']
         
-        # 사용자 반응 대기 (여러 개 처리)
+        # 이모티콘을 병렬로 추가
+        emoji_tasks = []
+        for emoji in emojis_to_add:
+            emoji_tasks.append(message.add_reaction(emoji))
+        
+        # 모든 이모티콘 추가 완료 대기
+        await asyncio.gather(*emoji_tasks, return_exceptions=True)
+        
+        # 사용자 반응 대기 (개선된 버전)
         selected_tracks = set()  # 선택된 트랙 번호들
+        processing_tracks = set()  # 현재 처리 중인 트랙들
         
         def check(reaction, user):
             return user == ctx.author and str(reaction.emoji) in ['✅', '❌', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣']
         
         try:
-            # 15초 동안 반응 대기
+            # 20초 동안 반응 대기
             while True:
-                reaction, user = await client.wait_for('reaction_add', timeout=15.0, check=check)
+                reaction, user = await client.wait_for('reaction_add', timeout=20.0, check=check)
                 
                 if str(reaction.emoji) == '✅':
                     # 첫 번째 추천 곡 자동 재생
-                    await play_spotify_track(ctx, recommendations, 0)
+                    if 0 not in processing_tracks:
+                        processing_tracks.add(0)
+                        # 비동기로 재생 시작 (블로킹하지 않음)
+                        asyncio.create_task(play_spotify_track(ctx, recommendations, 0))
                     break
                 elif str(reaction.emoji) == '❌':
                     await ctx.send("```자동 재생을 취소했습니다.```")
@@ -836,14 +844,19 @@ async def mind_recommend(ctx, *, query: str = None):
                     # 번호 선택 재생
                     track_index = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'].index(str(reaction.emoji))
                     
-                    if track_index not in selected_tracks:
+                    if track_index not in selected_tracks and track_index not in processing_tracks:
                         selected_tracks.add(track_index)
-                        await play_spotify_track(ctx, recommendations, track_index)
+                        processing_tracks.add(track_index)
+                        
+                        # 비동기로 재생 시작 (블로킹하지 않음)
+                        asyncio.create_task(play_spotify_track(ctx, recommendations, track_index))
                         
                         # 선택된 곡이 5개 이상이면 중단
                         if len(selected_tracks) >= 5:
                             await ctx.send("```5개 곡이 선택되어 재생을 중단합니다.```")
                             break
+                    elif track_index in processing_tracks:
+                        await ctx.send(f"```{track_index + 1}번 곡은 현재 처리 중입니다. 잠시만 기다려주세요.```")
                     else:
                         await ctx.send(f"```{track_index + 1}번 곡은 이미 선택되었습니다.```")
                 
@@ -898,28 +911,36 @@ async def spotify_search(ctx, *, query: str = None):
         
         # 자동 재생 옵션 제공
         message = await ctx.send(embed=embed)
-        await message.add_reaction('✅')  # 자동 재생
-        await message.add_reaction('❌')  # 취소
         
-        # 번호 이모지 추가
-        number_emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣']
-        for emoji in number_emojis:
-            await message.add_reaction(emoji)
+        # 모든 이모티콘을 한 번에 추가 (더 빠른 반응을 위해)
+        emojis_to_add = ['✅', '❌', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣']
         
-        # 사용자 반응 대기 (여러 개 처리)
+        # 이모티콘을 병렬로 추가
+        emoji_tasks = []
+        for emoji in emojis_to_add:
+            emoji_tasks.append(message.add_reaction(emoji))
+        
+        # 모든 이모티콘 추가 완료 대기
+        await asyncio.gather(*emoji_tasks, return_exceptions=True)
+        
+        # 사용자 반응 대기 (개선된 버전)
         selected_tracks = set()  # 선택된 트랙 번호들
+        processing_tracks = set()  # 현재 처리 중인 트랙들
         
         def check(reaction, user):
             return user == ctx.author and str(reaction.emoji) in ['✅', '❌', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣']
         
         try:
-            # 15초 동안 반응 대기
+            # 20초 동안 반응 대기
             while True:
-                reaction, user = await client.wait_for('reaction_add', timeout=15.0, check=check)
+                reaction, user = await client.wait_for('reaction_add', timeout=20.0, check=check)
                 
                 if str(reaction.emoji) == '✅':
                     # 첫 번째 검색 결과 자동 재생
-                    await play_spotify_track(ctx, tracks, 0)
+                    if 0 not in processing_tracks:
+                        processing_tracks.add(0)
+                        # 비동기로 재생 시작 (블로킹하지 않음)
+                        asyncio.create_task(play_spotify_track(ctx, tracks, 0))
                     break
                 elif str(reaction.emoji) == '❌':
                     await ctx.send("```자동 재생을 취소했습니다.```")
@@ -928,14 +949,19 @@ async def spotify_search(ctx, *, query: str = None):
                     # 번호 선택 재생
                     track_index = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'].index(str(reaction.emoji))
                     
-                    if track_index not in selected_tracks:
+                    if track_index not in selected_tracks and track_index not in processing_tracks:
                         selected_tracks.add(track_index)
-                        await play_spotify_track(ctx, tracks, track_index)
+                        processing_tracks.add(track_index)
+                        
+                        # 비동기로 재생 시작 (블로킹하지 않음)
+                        asyncio.create_task(play_spotify_track(ctx, tracks, track_index))
                         
                         # 선택된 곡이 5개 이상이면 중단
                         if len(selected_tracks) >= 5:
                             await ctx.send("```5개 곡이 선택되어 재생을 중단합니다.```")
                             break
+                    elif track_index in processing_tracks:
+                        await ctx.send(f"```{track_index + 1}번 곡은 현재 처리 중입니다. 잠시만 기다려주세요.```")
                     else:
                         await ctx.send(f"```{track_index + 1}번 곡은 이미 선택되었습니다.```")
                 
