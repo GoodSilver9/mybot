@@ -481,23 +481,23 @@ async def play_next(ctx):
         await ctx.send("```재생할 곡이 더 이상 없습니다.```")
         
         # 5분 후 자동 퇴장 타이머 설정
-        async def disconnect_after_timeout():
-            try:
-                await asyncio.sleep(300)  # 5분 대기
-                if ctx.voice_client and ctx.voice_client.is_connected() and not is_playing:
-                    await ctx.voice_client.disconnect()
-                    await ctx.send("```5분 동안 아무 곡도 재생되지 않아 음성 채널에서 나갑니다.```")
-            except asyncio.CancelledError:
-                pass  # 타이머가 취소된 경우
-            except Exception as e:
-                print(f"자동 퇴장 중 오류: {e}")
+        # async def disconnect_after_timeout():
+        #     try:
+        #         await asyncio.sleep(300)  # 5분 대기
+        #         if ctx.voice_client and ctx.voice_client.is_connected() and not is_playing:
+        #             await ctx.voice_client.disconnect()
+        #             await ctx.send("```5분 동안 아무 곡도 재생되지 않아 음성 채널에서 나갑니다.```")
+        #     except asyncio.CancelledError:
+        #         pass  # 타이머가 취소된 경우
+        #     except Exception as e:
+        #         print(f"자동 퇴장 중 오류: {e}")
         
-        # 이전 타이머가 있다면 취소
-        if disconnect_task:
-            disconnect_task.cancel()
+        # # 이전 타이머가 있다면 취소
+        # if disconnect_task:
+        #     disconnect_task.cancel()
         
-        # 새로운 타이머 시작
-        disconnect_task = asyncio.create_task(disconnect_after_timeout())
+        # # 새로운 타이머 시작
+        # disconnect_task = asyncio.create_task(disconnect_after_timeout())
         return
 
     # 음성 연결 상태 확인
