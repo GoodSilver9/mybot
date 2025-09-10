@@ -12,6 +12,7 @@ from discord import File, FFmpegPCMAudio
 from io import BytesIO
 from PIL import Image, ImageDraw
 from discord.ext import commands
+from config import create_bot_client, FFMPEG_OPTIONS
 
 # yt-dlp 자동 업데이트 함수
 def update_yt_dlp():
@@ -109,10 +110,8 @@ except ImportError as e:
     SPOTIFY_AVAILABLE = False
     print(f"[경고] Spotify API 통합 모듈 로드 실패: {e}")
 
-intents = discord.Intents.default()
-intents.message_content = True  
-
-client = commands.Bot(command_prefix='.', intents=intents, case_insensitive=True)
+# 봇 클라이언트 생성
+client = create_bot_client()
 
 # 봇 실행 상태 플래그
 is_bot_running = False
@@ -126,12 +125,6 @@ disconnect_task = None  # 자동 퇴장 타이머를 위한 변수
 auto_similar_mode = False  # 자동 비슷한 곡 재생 모드
 auto_similar_queue = []  # 자동 비슷한 곡 대기열
 
-# FFmpeg 옵션 (안정성 개선)
-FFMPEG_OPTIONS = {
-    'executable': 'C:\\Program Files (x86)\\ffmpeg-2024-10-13-git-e347b4ff31-essentials_build\\bin\\ffmpeg.exe',
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -timeout 30000000 -nostdin',
-    'options': '-vn -b:a 128k -bufsize 4096k -maxrate 256k -loglevel error -avoid_negative_ts make_zero -fflags +discardcorrupt'
-}
 
 # Youtube-dl 옵션
 ydl_opts = {
