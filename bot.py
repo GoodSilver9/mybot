@@ -127,10 +127,15 @@ auto_similar_mode = False  # 자동 비슷한 곡 재생 모드
 auto_similar_queue = []  # 자동 비슷한 곡 대기열
 
 # FFmpeg 옵션 (안정성 개선)
+#  PATH 설정확인 ffmpeg.exe 
+#  만약 안되어있으면 
+# 'executable': 'C:\\Program Files (x86)\\ffmpeg-2024-10-13-git-e347b4ff31-essentials_build\\bin\\ffmpeg.exe',
+#     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -timeout 30000000 -nostdin',
+#     'options': '-vn -b:a 128k -bufsize 4096k -maxrate 256k -loglevel error -avoid_negative_ts make_zero -fflags +discardcorrupt'
 FFMPEG_OPTIONS = {
-    'executable': 'C:\\Program Files (x86)\\ffmpeg-2024-10-13-git-e347b4ff31-essentials_build\\bin\\ffmpeg.exe',
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -timeout 30000000 -nostdin',
-    'options': '-vn -b:a 128k -bufsize 4096k -maxrate 256k -loglevel error -avoid_negative_ts make_zero -fflags +discardcorrupt'
+    'executable': 'ffmpeg.exe',
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -timeout 30000000 -nostdin -threads 1',  # 스레드 제한
+    'options': '-vn -b:a 128k -bufsize 4096k -maxrate 256k -loglevel error -avoid_negative_ts make_zero -fflags +discardcorrupt -threads 1'
 }
 
 # Youtube-dl 옵션
@@ -498,15 +503,54 @@ async def skip(ctx):
         await ctx.send("```현재 재생 중인 곡이 없습니다.```")
 
 async def play_next(ctx):
-    global is_playing, current_track, disconnect_task, auto_similar_mode, auto_similar_queue, current_track_info
+    global is_playing, current_track, disconnect_task, auto_similar_mode, current_track_info
 
     if len(queue) == 0:  # 재생할 곡이 없는 경우
-        # 자동 대기열에 곡이 있는 경우
-        if auto_similar_queue:
-            next_track = auto_similar_queue.pop(0)
-            queue.append((next_track['url'], next_track['title']))
-            current_track_info = next_track['info']
-            await ctx.send(f"```🎵 자동으로 비슷한 곡을 재생합니다: {next_track['title']}```")
+        # 자동 비슷한 곡 모드가 활성화되어 있고, 현재 재생 중인 Spotify 곡이 있는 경우
+        if auto_similar_mode and current_track_info and SPOTIFY_AVAILABLE:
+            try:
+                await ctx.send("```🔄 비슷한 곡을 찾는 중...```")
+                
+                # 현재 곡과 비슷한 곡 1개만 찾기
+                similar_tracks = await spotify_api.get_similar_tracks(
+                    current_track_info['name'], 
+                    current_track_info['artist'], 
+                    limit=1  # 1개만 가져오기
+                )
+                
+                if similar_tracks and len(similar_tracks) > 0:
+                    selected_track = similar_tracks[0]
+                    search_query = f"{selected_track['name']} {selected_track['artist']}"
+                    url2, title = await search_youtube(search_query)
+                    
+                    if url2:
+                        # 큐에 1개만 추가
+                        queue.append((url2, title))
+                        # 현재 곡 정보 업데이트 (다음 비슷한 곡을 위해)
+                        current_track_info = {
+                            'name': selected_track['name'],
+                            'artist': selected_track['artist'],
+                            'album': selected_track['album'],
+                            'external_url': selected_track['external_url'],
+                            'duration_ms': selected_track['duration_ms']
+                        }
+                        await ctx.send(f"```🎵 비슷한 곡을 추가했습니다: {title}```")
+                    else:
+                        await ctx.send("```❌ 비슷한 곡을 YouTube에서 찾을 수 없습니다.```")
+                        is_playing = False
+                        current_track = None
+                        return
+                else:
+                    await ctx.send("```❌ 비슷한 곡을 찾을 수 없습니다.```")
+                    is_playing = False
+                    current_track = None
+                    return
+            except Exception as e:
+                print(f"비슷한 곡 검색 중 오류: {e}")
+                await ctx.send("```❌ 비슷한 곡을 찾는 중 오류가 발생했습니다.```")
+                is_playing = False
+                current_track = None
+                return
         else:
             is_playing = False
             current_track = None
@@ -542,8 +586,8 @@ async def play_next(ctx):
         except Exception as play_error:
             print(f"다음 곡 재생 중 오류: {play_error}")
             await ctx.send(f"```다음 곡 재생 중 오류가 발생했습니다.\n'{title}' 건너뛰고 다음 곡을 재생합니다.```")
-            # 오류가 발생한 경우 다음 곡으로 넘어가기 (재귀 호출 방지)
-            if len(queue) > 0 or (auto_similar_mode and auto_similar_queue):
+            # 오류가 발생한 경우 다음 곡으로 넘어가기
+            if len(queue) > 0 or (auto_similar_mode and current_track_info):
                 await asyncio.sleep(1)  # 1초 대기 후 재시도
                 await play_next(ctx)
             else:
@@ -553,8 +597,8 @@ async def play_next(ctx):
     except Exception as e:
         print(f"다음 곡 재생 중 오류: {e}")
         await ctx.send(f"```다음 곡 재생 중 오류가 발생했습니다: {str(e)}```")
-        # 오류가 발생한 경우 다음 곡으로 넘어가기 (재귀 호출 방지)
-        if len(queue) > 0 or (auto_similar_mode and auto_similar_queue):
+        # 오류가 발생한 경우 다음 곡으로 넘어가기
+        if len(queue) > 0 or (auto_similar_mode and current_track_info):
             await asyncio.sleep(1)  # 1초 대기 후 재시도
             await play_next(ctx)
         else:
@@ -1179,11 +1223,11 @@ async def similar_tracks(ctx):
     except Exception as e:
         await ctx.send(f"```❌ 비슷한 음악 찾기 중 오류가 발생했습니다: {str(e)}```")
 
-# 자동 비슷한 곡 재생 모드 토글 명령어
+# 개선된 자동 비슷한 곡 재생 모드 토글 명령어
 @client.command(name="auto")
 async def auto_similar(ctx):
-    """현재 재생 중인 곡에서 비슷한 곡 5개를 대기열에 추가"""
-    global auto_similar_queue, current_track_info
+    """자동 비슷한 곡 재생 모드 토글 (1곡씩 동적 추가)"""
+    global auto_similar_mode, current_track_info
     
     if not SPOTIFY_AVAILABLE:
         await ctx.send("```❌ Spotify API가 설정되지 않았습니다.```")
@@ -1193,54 +1237,14 @@ async def auto_similar(ctx):
         await ctx.send("```❌ 현재 재생 중인 Spotify 곡이 없습니다.\n먼저 .sp 명령어로 Spotify 곡을 재생해주세요.```")
         return
     
-    try:
-        await ctx.send("```🔄 현재 곡과 비슷한 곡을 찾는 중...```")
-        similar_tracks = await spotify_api.get_similar_tracks(
-            current_track_info['name'], 
-            current_track_info['artist']
-        )
-        
-        if similar_tracks and len(similar_tracks) > 0:
-                    # 자동 대기열에 추가
-                    added_count = 0
-                    failed_count = 0
-                    for selected_track in similar_tracks:
-                        try:
-                            search_query = f"{selected_track['name']} {selected_track['artist']}"
-                            url2, title = await search_youtube(search_query)
-                            
-                            if url2:
-                                # 자동 대기열에 추가 (일반 대기열이 아닌)
-                                auto_similar_queue.append({
-                                    'url': url2,
-                                    'title': title,
-                                    'info': {
-                                        'name': selected_track['name'],
-                                        'artist': selected_track['artist'],
-                                        'album': selected_track['album'],
-                                        'external_url': selected_track['external_url'],
-                                        'duration_ms': selected_track['duration_ms']
-                                    }
-                                })
-                                added_count += 1
-                            else:
-                                failed_count += 1
-                                print(f"YouTube에서 곡을 찾을 수 없음: {search_query}")
-                        except Exception as e:
-                            failed_count += 1
-                            print(f"개별 곡 검색 중 오류: {e}")
-                            continue
-                    
-                    if added_count > 0:
-                        track_list = "\n".join([f"• {track['name']} - {track['artist']}" for track in similar_tracks[:5]])
-                        await ctx.send(f"```✅ {added_count}개의 비슷한 곡이 대기열에 추가되었습니다!\n\n추가된 곡들:\n{track_list}```")
-                    else:
-                        await ctx.send("```🔄 자동 비슷한 곡 재생 모드가 활성화되었습니다!\n하지만 비슷한 곡을 YouTube에서 찾을 수 없습니다.\n\n특징:\n• 5개씩 미리 준비하여 부드러운 연속 재생\n• Spotify 알고리즘으로 정확한 비슷한 곡 추천\n• 무한 반복 재생 가능\n\n사용법:\n.auto - 모드 토글\n.autostop - 자동 모드만 중단\n.stop - 모든 재생 중단```")
-        else:
-            await ctx.send("```❌ 비슷한 곡을 찾을 수 없습니다.\n\n이 곡은 Spotify에서 추천을 제공하지 않거나,\n유사한 곡을 찾을 수 없습니다.\n\n다른 곡으로 시도해보세요.```")
-    except Exception as e:
-        print(f"비슷한 곡 검색 중 오류: {e}")
-        await ctx.send("```❌ 비슷한 곡을 찾는 중 오류가 발생했습니다.```")
+    if auto_similar_mode:
+        # 모드 비활성화
+        auto_similar_mode = False
+        await ctx.send("```⏹️ 자동 비슷한 곡 재생 모드가 비활성화되었습니다.\n현재 재생 중인 곡은 계속 재생됩니다.```")
+    else:
+        # 모드 활성화
+        auto_similar_mode = True
+        await ctx.send("``` 자동 비슷한 곡 재생 모드가 활성화되었습니다!\n\n특징:\n• 현재 곡이 끝날 때마다 비슷한 곡 1개씩 자동 추가\n• 메모리 효율적 (큐에 쌓이지 않음)\n• 자연스러운 연속 재생\n• .autostop으로 언제든 중단 가능\n\n현재 곡: {current_track_info['name']} - {current_track_info['artist']}```")
 
 # 자동 비슷한 곡 재생 모드만 중단하는 명령어
 @client.command(name="autostop")
