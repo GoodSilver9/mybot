@@ -28,3 +28,7 @@ Thumbs.db
 
 # Node
 node_modules/ 
+
+# config 파일
+.config.py
+config.py
