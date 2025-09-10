@@ -144,6 +144,18 @@ ydl_opts = {
 async def on_ready():
     print(f'Logged in as {client.user}')
 
+# 안전한 채널명 처리 함수
+def safe_channel_name(channel):
+    """채널명을 안전하게 처리하여 인코딩 문제를 방지합니다."""
+    try:
+        if channel and hasattr(channel, 'name'):
+            # 채널명을 안전하게 인코딩
+            return channel.name.encode('utf-8', errors='ignore').decode('utf-8')
+        return "Unknown Channel"
+    except Exception as e:
+        print(f"[경고] 채널명 처리 중 오류: {e}")
+        return "Unknown Channel"
+
 # 음성 연결 상태 모니터링
 @client.event
 async def on_voice_state_update(member, before, after):
@@ -151,13 +163,18 @@ async def on_voice_state_update(member, before, after):
     if member == client.user:
         return
     
-    voice_client = client.voice_clients
-    for vc in voice_client:
-        if vc.channel and len(vc.channel.members) == 1:  # 봇만 남은 경우
-            await asyncio.sleep(5)  # 5초 대기 후 확인
-            if len(vc.channel.members) == 1:  # 여전히 혼자면 퇴장
-                await vc.disconnect()
-                print("음성 채널에 혼자 남아 자동 퇴장했습니다.")
+    try:
+        voice_client = client.voice_clients
+        for vc in voice_client:
+            if vc.channel and len(vc.channel.members) == 1:  # 봇만 남은 경우
+                channel_name = safe_channel_name(vc.channel)
+                print(f"[디버그] 음성 채널 '{channel_name}'에서 혼자 남음 확인")
+                await asyncio.sleep(5)  # 5초 대기 후 확인
+                if len(vc.channel.members) == 1:  # 여전히 혼자면 퇴장
+                    await vc.disconnect()
+                    print(f"[시스템] 음성 채널 '{channel_name}'에서 혼자 남아 자동 퇴장했습니다.")
+    except Exception as e:
+        print(f"[오류] 음성 상태 업데이트 처리 중 오류: {str(e)}")
 
 # 음성 채널 연결 함수
 async def join(ctx):
@@ -226,10 +243,44 @@ async def play(ctx, *, search_or_url: str = None):
         if ctx.author.voice:  
             try:
                 channel = ctx.author.voice.channel
-                voice = await channel.connect()
-                await ctx.send(f"``` 음성 채널에 연결되었습니다.```")
+                channel_name = safe_channel_name(channel)
+                print(f"[디버그] 음성 채널 연결 시도: {channel_name} (ID: {channel.id})")
+                
+                # 기존 음성 연결이 있다면 정리
+                if ctx.voice_client:
+                    try:
+                        await ctx.voice_client.disconnect()
+                        print(f"[디버그] 기존 음성 연결 정리 완료")
+                        await asyncio.sleep(1)  # 1초 대기
+                    except:
+                        pass
+                
+                # 재시도 로직 추가
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        voice = await channel.connect()
+                        print(f"[디버그] 음성 채널 연결 성공: {channel_name}")
+                        break
+                    except Exception as connect_error:
+                        print(f"[오류] 음성 채널 연결 시도 {attempt + 1}/{max_retries} 실패: {str(connect_error)}")
+                        if attempt < max_retries - 1:
+                            # 4006 오류의 경우 더 긴 대기 시간
+                            wait_time = 5 if "4006" in str(connect_error) else 2
+                            print(f"[디버그] {wait_time}초 대기 후 재시도...")
+                            await asyncio.sleep(wait_time)
+                        else:
+                            raise connect_error
+                            
             except Exception as e:
-                await ctx.send(f"```음성 채널 연결 중 오류가 발생했습니다: {str(e)}```")
+                print(f"[오류] 음성 채널 연결 최종 실패: {str(e)}")
+                print(f"[오류] 채널명: {channel.name if 'channel' in locals() else 'Unknown'}")
+                
+                # 사용자에게 더 친화적인 오류 메시지
+                if "4006" in str(e) or "ConnectionClosed" in str(e):
+                    await ctx.send(f"```❌ 음성 채널 연결에 실패했습니다.\n\n가능한 원인:\n• 네트워크 연결 문제\n• Discord 서버 과부하\n• 봇 권한 부족\n\n잠시 후 다시 시도해주세요.```")
+                else:
+                    await ctx.send(f"```❌ 음성 채널 연결 중 오류가 발생했습니다.\n오류: {str(e)[:100]}...```")
                 return
         else:
             await ctx.send("```먼저 음성 채널에 접속해주세요.```")
@@ -785,8 +836,44 @@ async def play_spotify_track(ctx, recommendations, track_index):
         voice = ctx.voice_client
         if not voice or not voice.is_connected():
             if ctx.author.voice:
-                channel = ctx.author.voice.channel
-                voice = await channel.connect()
+                try:
+                    channel = ctx.author.voice.channel
+                    channel_name = safe_channel_name(channel)
+                    print(f"[디버그] Spotify 재생 - 음성 채널 연결 시도: {channel_name} (ID: {channel.id})")
+                    
+                    # 기존 음성 연결이 있다면 정리
+                    if ctx.voice_client:
+                        try:
+                            await ctx.voice_client.disconnect()
+                            print(f"[디버그] Spotify 재생 - 기존 음성 연결 정리 완료")
+                            await asyncio.sleep(1)  # 1초 대기
+                        except:
+                            pass
+                    
+                    # 재시도 로직 추가
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            voice = await channel.connect()
+                            print(f"[디버그] Spotify 재생 - 음성 채널 연결 성공: {channel_name}")
+                            break
+                        except Exception as connect_error:
+                            print(f"[오류] Spotify 재생 - 음성 채널 연결 시도 {attempt + 1}/{max_retries} 실패: {str(connect_error)}")
+                            if attempt < max_retries - 1:
+                                # 4006 오류의 경우 더 긴 대기 시간
+                                wait_time = 5 if "4006" in str(connect_error) else 2
+                                print(f"[디버그] Spotify 재생 - {wait_time}초 대기 후 재시도...")
+                                await asyncio.sleep(wait_time)
+                            else:
+                                raise connect_error
+                                
+                except Exception as e:
+                    print(f"[오류] Spotify 재생 - 음성 채널 연결 최종 실패: {str(e)}")
+                    if "4006" in str(e) or "ConnectionClosed" in str(e):
+                        await ctx.send(f"```❌ 음성 채널 연결에 실패했습니다.\n네트워크 문제일 수 있습니다. 잠시 후 다시 시도해주세요.```")
+                    else:
+                        await ctx.send(f"```❌ 음성 채널 연결 중 오류가 발생했습니다: {str(e)[:100]}...```")
+                    return
             else:
                 await ctx.send("```음성 채널에 먼저 접속해주세요.```")
                 return
