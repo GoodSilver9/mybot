@@ -1339,6 +1339,137 @@ async def auto_similar_mode_stop(ctx):
     else:
         await ctx.send("```💡 자동 비슷한 곡 재생 모드가 이미 비활성화되어 있습니다.```")
 
+# Spotify 플레이리스트 재생 명령어
+@client.command(name="playlist")
+async def spotify_playlist(ctx, *, playlist_url: str = None):
+    """Spotify 플레이리스트에서 랜덤 10곡을 재생"""
+    if not SPOTIFY_AVAILABLE:
+        await ctx.send("```❌ Spotify API가 설정되지 않았습니다.```")
+        return
+    
+    # URL이 없으면 고정 플레이리스트 사용
+    if not playlist_url:
+        playlist_url = "https://open.spotify.com/playlist/3EFwYCA2ixqyf9n5qIridt?si=a3dee8612ba64320"
+    
+    await ctx.send("```🎵 Spotify 플레이리스트를 분석하는 중...```")
+    
+
+    try:
+        # 플레이리스트에서 랜덤 10곡 가져오기
+        tracks, playlist_info = await spotify_api.get_playlist_tracks(playlist_url, limit=10)
+        
+        if not tracks:
+            await ctx.send("```❌ 플레이리스트에서 곡을 찾을 수 없습니다.\n\n가능한 원인:\n• 플레이리스트가 비어있음\n• 플레이리스트가 비공개임\n• 잘못된 URL\n\n다른 플레이리스트를 시도해보세요.```")
+            return
+        
+        # 플레이리스트 정보 표시
+        embed = discord.Embed(
+            title="🎵 Spotify 플레이리스트 재생",
+            description=f"**{playlist_info['name']}**\n\n📝 {playlist_info['description'][:100]}{'...' if len(playlist_info['description']) > 100 else ''}\n📊 총 곡 수: {playlist_info['total_tracks']}개\n🎲 랜덤 선택: {len(tracks)}개",
+            color=0x1DB954,
+            url=playlist_info['external_url']
+        )
+        
+        # 선택된 곡들 표시
+        track_list = []
+        for i, track in enumerate(tracks, 1):
+            duration_min = track['duration_ms'] // 60000
+            duration_sec = (track['duration_ms'] % 60000) // 1000
+            duration_str = f"{duration_min}:{duration_sec:02d}"
+            track_list.append(f"{i}. **{track['name']}** - {track['artist']} ({duration_str})")
+        
+        embed.add_field(
+            name="🎲 랜덤 선택된 곡들",
+            value="\n".join(track_list),
+            inline=False
+        )
+        
+        await ctx.send(embed=embed)
+        
+        # 음성 채널 연결 확인
+        voice = ctx.voice_client
+        if not voice or not voice.is_connected():
+            if ctx.author.voice:
+                try:
+                    channel = ctx.author.voice.channel
+                    channel_name = safe_channel_name(channel)
+                    print(f"[디버그] 플레이리스트 재생 - 음성 채널 연결 시도: {channel_name}")
+                    
+                    # 기존 음성 연결이 있다면 정리
+                    if ctx.voice_client:
+                        try:
+                            await ctx.voice_client.disconnect()
+                            print(f"[디버그] 플레이리스트 재생 - 기존 음성 연결 정리 완료")
+                            await asyncio.sleep(1)
+                        except:
+                            pass
+                    
+                    # 재시도 로직
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            voice = await channel.connect()
+                            print(f"[디버그] 플레이리스트 재생 - 음성 채널 연결 성공: {channel_name}")
+                            break
+                        except Exception as connect_error:
+                            print(f"[오류] 플레이리스트 재생 - 음성 채널 연결 시도 {attempt + 1}/{max_retries} 실패: {str(connect_error)}")
+                            if attempt < max_retries - 1:
+                                wait_time = 5 if "4006" in str(connect_error) else 2
+                                print(f"[디버그] 플레이리스트 재생 - {wait_time}초 대기 후 재시도...")
+                                await asyncio.sleep(wait_time)
+                            else:
+                                raise connect_error
+                                
+                except Exception as e:
+                    print(f"[오류] 플레이리스트 재생 - 음성 채널 연결 최종 실패: {str(e)}")
+                    await ctx.send(f"```❌ 음성 채널 연결에 실패했습니다.\n네트워크 문제일 수 있습니다. 잠시 후 다시 시도해주세요.```")
+                    return
+            else:
+                await ctx.send("```음성 채널에 먼저 접속해주세요.```")
+                return
+        
+        # 각 트랙을 YouTube에서 검색하여 큐에 추가
+        added_count = 0
+        failed_count = 0
+        
+        await ctx.send("```🔄 YouTube에서 곡들을 검색하는 중...```")
+        
+        for i, track in enumerate(tracks, 1):
+            try:
+                search_query = f"{track['name']} {track['artist']}"
+                url2, title = await search_youtube(search_query)
+                
+                if url2:
+                    queue.append((url2, title))
+                    added_count += 1
+                    print(f"[디버그] 플레이리스트 곡 {i}/{len(tracks)} 추가 성공: {title}")
+                else:
+                    failed_count += 1
+                    print(f"[디버그] 플레이리스트 곡 {i}/{len(tracks)} 검색 실패: {search_query}")
+                
+                # 진행 상황 표시 (5곡마다)
+                if i % 5 == 0 or i == len(tracks):
+                    await ctx.send(f"```📊 진행 상황: {i}/{len(tracks)} 곡 처리 완료```")
+                
+            except Exception as e:
+                failed_count += 1
+                print(f"[디버그] 플레이리스트 곡 {i}/{len(tracks)} 처리 중 오류: {e}")
+                continue
+        
+        # 결과 요약
+        if added_count > 0:
+            await ctx.send(f"```✅ 플레이리스트에서 {added_count}개 곡을 큐에 추가했습니다!\n\n📊 결과:\n• 성공: {added_count}개\n• 실패: {failed_count}개\n• 현재 큐: {len(queue)}개```")
+            
+            # 현재 재생 중이 아니라면 첫 번째 곡 재생
+            if not voice.is_playing() and queue:
+                await play_next(ctx)
+        else:
+            await ctx.send("```❌ 플레이리스트에서 재생 가능한 곡을 찾을 수 없습니다.\n\nYouTube에서 해당 곡들을 찾을 수 없었습니다.\n다른 플레이리스트를 시도해보세요.```")
+        
+    except Exception as e:
+        print(f"[디버그] 플레이리스트 재생 중 오류: {e}")
+        await ctx.send(f"```❌ 플레이리스트 재생 중 오류가 발생했습니다: {str(e)[:200]}...```")
+
 if __name__ == "__main__":
     try:
         client.run(TOKEN)

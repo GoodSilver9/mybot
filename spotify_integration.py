@@ -431,6 +431,123 @@ class SpotifyAPI:
             print(f"[디버그] 비슷한 곡 찾기 중 오류: {e}")
             return []
 
+    async def get_playlist_tracks(self, playlist_url: str, limit: int = 10) -> tuple[List[Dict], Dict]:
+        """플레이리스트에서 트랙 목록 가져오기 (랜덤 샘플링)"""
+        if not await self.ensure_token():
+            return [], {}
+            
+        try:
+            # 플레이리스트 ID 추출
+            playlist_id = self._extract_playlist_id(playlist_url)
+            if not playlist_id:
+                print(f"[디버그] 플레이리스트 ID 추출 실패: {playlist_url}")
+                return [], {}
+            
+            headers = {
+                'Authorization': f'Bearer {self.access_token}'
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                # 1단계: 플레이리스트 기본 정보 가져오기
+                playlist_info_url = f'https://api.spotify.com/v1/playlists/{playlist_id}'
+                async with session.get(playlist_info_url, headers=headers) as response:
+                    if response.status != 200:
+                        print(f"[디버그] 플레이리스트 정보 조회 실패: {response.status}")
+                        return [], {}
+                    
+                    playlist_data = await response.json()
+                    playlist_info = {
+                        'name': playlist_data['name'],
+                        'description': playlist_data.get('description', ''),
+                        'total_tracks': playlist_data['tracks']['total'],
+                        'external_url': playlist_data['external_urls']['spotify']
+                    }
+                
+                # 2단계: 모든 트랙 가져오기 (페이징 처리)
+                all_tracks = []
+                tracks_url = f'https://api.spotify.com/v1/playlists/{playlist_id}/tracks'
+                offset = 0
+                limit_per_request = 100  # Spotify API 최대값
+                
+                while True:
+                    params = {
+                        'limit': limit_per_request,
+                        'offset': offset,
+                        'market': 'KR'
+                    }
+                    
+                    async with session.get(tracks_url, headers=headers, params=params) as response:
+                        if response.status != 200:
+                            print(f"[디버그] 트랙 목록 조회 실패: {response.status}")
+                            break
+                        
+                        data = await response.json()
+                        tracks = data['items']
+                        
+                        if not tracks:
+                            break
+                        
+                        # 트랙 정보 추출
+                        for item in tracks:
+                            if item['track'] and item['track']['type'] == 'track':  # 트랙이 존재하고 삭제되지 않은 경우
+                                track = item['track']
+                                all_tracks.append({
+                                    'name': track['name'],
+                                    'artist': track['artists'][0]['name'],
+                                    'album': track['album']['name'],
+                                    'external_url': track['external_urls']['spotify'],
+                                    'preview_url': track['preview_url'],
+                                    'duration_ms': track['duration_ms']
+                                })
+                        
+                        # 더 이상 가져올 트랙이 없으면 중단
+                        if len(tracks) < limit_per_request:
+                            break
+                        
+                        offset += limit_per_request
+                
+                print(f"[디버그] 플레이리스트에서 총 {len(all_tracks)}개 트랙 발견")
+                
+                # 3단계: 랜덤 샘플링
+                import random
+                if len(all_tracks) <= limit:
+                    selected_tracks = all_tracks
+                else:
+                    selected_tracks = random.sample(all_tracks, limit)
+                
+                print(f"[디버그] 랜덤으로 {len(selected_tracks)}개 트랙 선택")
+                return selected_tracks, playlist_info
+                
+        except Exception as e:
+            print(f"[디버그] 플레이리스트 트랙 조회 중 오류: {e}")
+            return [], {}
+    
+    def _extract_playlist_id(self, playlist_url: str) -> str:
+        """플레이리스트 URL에서 ID 추출"""
+        try:
+            # Spotify URL 패턴들
+            patterns = [
+                r'playlist/([a-zA-Z0-9]+)',
+                r'playlist:([a-zA-Z0-9]+)',
+                r'open\.spotify\.com/playlist/([a-zA-Z0-9]+)'
+            ]
+            
+            import re
+            for pattern in patterns:
+                match = re.search(pattern, playlist_url)
+                if match:
+                    return match.group(1)
+            
+            # URL이 아니라 ID인 경우
+            if len(playlist_url) == 22 and playlist_url.replace('-', '').replace('_', '').isalnum():
+                return playlist_url
+            
+            return None
+            
+        except Exception as e:
+            print(f"[디버그] 플레이리스트 ID 추출 중 오류: {e}")
+            return None
+
 # 감정 분석을 위한 간단한 키워드 매핑
 EMOTION_KEYWORDS = {
     # 기본 감정 (8개)
