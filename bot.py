@@ -12,7 +12,7 @@ from discord import File, FFmpegPCMAudio
 from io import BytesIO
 from PIL import Image, ImageDraw
 from discord.ext import commands
-from config import create_bot_client, FFMPEG_OPTIONS
+from config import FFMPEG_OPTIONS
 
 # yt-dlp 자동 업데이트 함수
 def update_yt_dlp():
@@ -110,7 +110,18 @@ except ImportError as e:
     SPOTIFY_AVAILABLE = False
     print(f"[경고] Spotify API 통합 모듈 로드 실패: {e}")
 
-# 봇 클라이언트 생성
+# 봇 클라이언트 생성 (config.py 내용 직접 포함)
+def create_bot_client(command_prefix='.', case_insensitive=True):
+    """Discord 봇 클라이언트를 생성합니다."""
+    intents = discord.Intents.default()
+    intents.message_content = True
+    client = commands.Bot(command_prefix=command_prefix, intents=intents, case_insensitive=case_insensitive)
+    
+    # 음성 연결 타임아웃 설정 (기본값보다 길게)
+    discord.voice_client.VoiceClient.timeout = 30.0  # 30초 타임아웃
+    
+    return client
+
 client = create_bot_client()
 
 # 봇 실행 상태 플래그
@@ -149,8 +160,15 @@ def safe_channel_name(channel):
     """채널명을 안전하게 처리하여 인코딩 문제를 방지합니다."""
     try:
         if channel and hasattr(channel, 'name'):
-            # 채널명을 안전하게 인코딩
-            return channel.name.encode('utf-8', errors='ignore').decode('utf-8')
+            # 특수 문자와 이모지를 제거하고 안전하게 인코딩
+            name = channel.name
+            # 이모지와 특수 문자 제거
+            import re
+            name = re.sub(r'[^\w\s\-_()]', '', name)
+            # 빈 문자열이면 기본값 사용
+            if not name.strip():
+                return "Voice Channel"
+            return name
         return "Unknown Channel"
     except Exception as e:
         print(f"[경고] 채널명 처리 중 오류: {e}")
@@ -1404,8 +1422,8 @@ async def spotify_playlist(ctx, *, playlist_url: str = None):
                         except:
                             pass
                     
-                    # 재시도 로직
-                    max_retries = 3
+                    # 재시도 로직 강화
+                    max_retries = 5
                     for attempt in range(max_retries):
                         try:
                             voice = await channel.connect()
@@ -1414,7 +1432,7 @@ async def spotify_playlist(ctx, *, playlist_url: str = None):
                         except Exception as connect_error:
                             print(f"[오류] 플레이리스트 재생 - 음성 채널 연결 시도 {attempt + 1}/{max_retries} 실패: {str(connect_error)}")
                             if attempt < max_retries - 1:
-                                wait_time = 5 if "4006" in str(connect_error) else 2
+                                wait_time = 10 + (attempt * 5)  # 점진적으로 대기 시간 증가
                                 print(f"[디버그] 플레이리스트 재생 - {wait_time}초 대기 후 재시도...")
                                 await asyncio.sleep(wait_time)
                             else:

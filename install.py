@@ -4,6 +4,7 @@ import winreg
 import win32com.client
 from pathlib import Path
 from PIL import Image, ImageOps
+import subprocess
 
 def create_icon():
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -48,6 +49,32 @@ def create_shortcut():
     
     print("자동 시작 설정이 완료되었습니다.")
     print(f"바로가기가 생성된 경로: {startup_folder}")
+
+def build_exe():
+    """실행파일을 빌드합니다."""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # PyInstaller 명령어 실행
+    cmd = [
+        'pyinstaller',
+        '--onefile',
+        '--noconsole',
+        '--name=DiscordBot',
+        '--add-data', f'config.py;.',
+        '--add-data', f'spotify_integration.py;.',
+        '--hidden-import', 'config',
+        '--hidden-import', 'spotify_integration',
+        'bot.py'
+    ]
+    
+    print("실행파일 빌드 중...")
+    try:
+        subprocess.run(cmd, cwd=current_dir, check=True)
+        print("빌드 완료! dist/DiscordBot.exe 파일이 생성되었습니다.")
+    except subprocess.CalledProcessError as e:
+        print(f"빌드 실패: {e}")
+    except FileNotFoundError:
+        print("PyInstaller가 설치되지 않았습니다. 'pip install pyinstaller'로 설치하세요.")
 
 if __name__ == "__main__":
     try:
