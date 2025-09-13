@@ -125,12 +125,6 @@ disconnect_task = None  # 자동 퇴장 타이머를 위한 변수
 auto_similar_mode = False  # 자동 비슷한 곡 재생 모드
 auto_similar_queue = []  # 자동 비슷한 곡 대기열
 
-FFMPEG_OPTIONS = {
-    'executable': 'ffmpeg.exe',
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -timeout 30000000 -nostdin -threads 1',  # 스레드 제한
-    'options': '-vn -b:a 128k -bufsize 4096k -maxrate 256k -loglevel error -avoid_negative_ts make_zero -fflags +discardcorrupt -threads 1'
-}
-
 
 # Youtube-dl 옵션
 ydl_opts = {
