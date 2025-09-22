@@ -319,6 +319,8 @@ async def play(ctx, *, search_or_url: str = None):
         try:
             # URL로 입력된 경우
             if search_or_url.startswith("http"):
+                # 로딩 메시지 표시
+                loading_msg = await ctx.send("```🔄 URL 정보를 가져오는 중...```")
                 # 플레이리스트 항목 수 확인을 위한 옵션
                 playlist_opts = {
                     'quiet': True,
@@ -326,10 +328,14 @@ async def play(ctx, *, search_or_url: str = None):
                     'noplaylist': False
                 }
                 
-                # 먼저 플레이리스트 정보만 확인
+                # 먼저 플레이리스트 정보만 확인 (비동기 처리)
+                loop = asyncio.get_event_loop()
                 with yt_dlp.YoutubeDL(playlist_opts) as ydl:
                     try:
-                        info = ydl.extract_info(search_or_url, download=False)
+                        info = await asyncio.wait_for(
+                            loop.run_in_executor(None, ydl.extract_info, search_or_url, False),
+                            timeout=15.0
+                        )
                         if 'entries' in info:
                             playlist_count = len(info['entries'])
                             if playlist_count > 10:
@@ -341,9 +347,20 @@ async def play(ctx, *, search_or_url: str = None):
                         print(f"플레이리스트 확인 중 오류: {e}")
                         pass  # 플레이리스트가 아닌 경우 무시
 
-                # 실제 음악 정보 추출
+                # 실제 음악 정보 추출 (비동기 처리)
+                loop = asyncio.get_event_loop()
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(search_or_url, download=False)
+                    try:
+                        info = await asyncio.wait_for(
+                            loop.run_in_executor(None, ydl.extract_info, search_or_url, False),
+                            timeout=30.0
+                        )
+                    except asyncio.TimeoutError:
+                        await ctx.send("```⏰ URL 처리 시간이 초과되었습니다. 다른 URL을 시도해보세요.```")
+                        return
+                    except Exception as extract_error:
+                        await ctx.send(f"```❌ URL 정보 추출 중 오류: {str(extract_error)[:100]}...```")
+                        return
                     
                     # 플레이리스트인 경우
                     if 'entries' in info:
@@ -373,9 +390,11 @@ async def play(ctx, *, search_or_url: str = None):
                                             "trackStream": False,
                                         }
 
-                                        # 음악 재생 로직
+                                        # 음악 재생 로직 (비동기 처리)
                                         try:
-                                            source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
+                                            # FFmpegPCMAudio 소스 생성을 비동기로 처리
+                                            loop = asyncio.get_event_loop()
+                                            source = await loop.run_in_executor(None, lambda: FFmpegPCMAudio(url2, **FFMPEG_OPTIONS))
                                             current_track = title
                                             voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
                                             await ctx.send(f"```지금 재생 중: {title}```")
@@ -433,14 +452,16 @@ async def play(ctx, *, search_or_url: str = None):
                     "trackStream": False,
                 }
 
-                # 음악 재생 로직
+                # 음악 재생 로직 (비동기 처리)
                 try:
                     # 음성 연결 상태 최종 확인
                     if not voice or not voice.is_connected():
                         await ctx.send("```음성 연결이 끊어졌습니다. 다시 연결해주세요.```")
                         return
                     
-                    source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
+                    # FFmpegPCMAudio 소스 생성을 비동기로 처리
+                    loop = asyncio.get_event_loop()
+                    source = await loop.run_in_executor(None, lambda: FFmpegPCMAudio(url2, **FFMPEG_OPTIONS))
                     current_track = title
                     
                     def after_play(error):
@@ -585,14 +606,16 @@ async def play_next(ctx):
         url, title = queue.pop(0)  
         current_track = title
 
-        # 다음 곡 재생
+        # 다음 곡 재생 (비동기 처리)
         try:
             # 이미 재생 중인지 확인
             if ctx.voice_client.is_playing():
                 print("이미 재생 중이므로 건너뜀")
                 return
-                
-            source = FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
+            
+            # FFmpegPCMAudio 소스 생성을 비동기로 처리
+            loop = asyncio.get_event_loop()
+            source = await loop.run_in_executor(None, lambda: FFmpegPCMAudio(url, **FFMPEG_OPTIONS))
             
             def after_play(error):
                 if error:
@@ -900,7 +923,9 @@ async def play_spotify_track(ctx, recommendations, track_index):
             queue.append((url2, title))
             await ctx.send(f"```'{title}'가 목록에 추가되었습니다!```")
         else:
-            source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
+            # FFmpegPCMAudio 소스 생성을 비동기로 처리
+            loop = asyncio.get_event_loop()
+            source = await loop.run_in_executor(None, lambda: FFmpegPCMAudio(url2, **FFMPEG_OPTIONS))
             voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
             current_track = title  # 현재 재생 중인 곡 설정
             await ctx.send(f"```지금 재생 중: {title}```")
@@ -1358,7 +1383,7 @@ async def auto_similar_mode_stop(ctx):
         await ctx.send("```💡 자동 비슷한 곡 재생 모드가 이미 비활성화되어 있습니다.```")
 
 # Spotify 플레이리스트 재생 명령어
-@client.command(name="playlist")
+@client.command(name="playlist", aliases=["pl"])
 async def spotify_playlist(ctx, *, playlist_url: str = None):
     """Spotify 플레이리스트에서 랜덤 10곡을 재생"""
     if not SPOTIFY_AVAILABLE:

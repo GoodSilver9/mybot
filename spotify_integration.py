@@ -460,7 +460,8 @@ class SpotifyAPI:
                         'name': playlist_data['name'],
                         'description': playlist_data.get('description', ''),
                         'total_tracks': playlist_data['tracks']['total'],
-                        'external_url': playlist_data['external_urls']['spotify']
+                        'external_url': playlist_data['external_urls']['spotify'],
+                        'owner': playlist_data['owner']['display_name']
                     }
                 
                 # 2단계: 모든 트랙 가져오기 (페이징 처리)
