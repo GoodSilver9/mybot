@@ -80,7 +80,10 @@ if not TOKEN:
         TOKEN = Token
         print("[디버그] disco_token.py에서 토큰 임포트 성공")
     except Exception as e:
-        print(f"[디버그] 모든 토큰 소스에서 실패: {str(e)}")
+        try:
+            print(f"[디버그] 모든 토큰 소스에서 실패: {str(e)}")
+        except UnicodeEncodeError:
+            print("[디버그] 토큰 로딩 실패 - 인코딩 문제")
         print(f"[디버그] 현재 디렉토리: {os.getcwd()}")
         print(f"[디버그] sys.path: {sys.path}")
         print("[경고] 토큰을 찾을 수 없습니다. env_tokens.txt 파일을 확인하세요.")
@@ -105,7 +108,10 @@ try:
     from spotify_integration import spotify_api, analyze_emotion_and_recommend
     SPOTIFY_AVAILABLE = True
     print("[시스템] Spotify API 통합 모듈 로드 완료")
-    print(f"[디버그] Spotify Client ID: {SPOTIFY_CLIENT_ID[:10]}..." if SPOTIFY_CLIENT_ID else "[경고] Spotify Client ID 없음")
+    try:
+        print(f"[디버그] Spotify Client ID: {SPOTIFY_CLIENT_ID[:10]}..." if SPOTIFY_CLIENT_ID else "[경고] Spotify Client ID 없음")
+    except UnicodeEncodeError:
+        print("[디버그] Spotify 설정 로딩 완료")
 except ImportError as e:
     SPOTIFY_AVAILABLE = False
     print(f"[경고] Spotify API 통합 모듈 로드 실패: {e}")
@@ -244,7 +250,10 @@ async def play(ctx, *, search_or_url: str = None):
             try:
                 channel = ctx.author.voice.channel
                 channel_name = safe_channel_name(channel)
-                print(f"[디버그] 음성 채널 연결 시도: {channel_name} (ID: {channel.id})")
+                try:
+                    print(f"[디버그] 음성 채널 연결 시도: {channel_name} (ID: {channel.id})")
+                except UnicodeEncodeError:
+                    print(f"[디버그] 음성 채널 연결 시도: {channel.id}")
                 
                 # 기존 음성 연결이 있다면 정리
                 if ctx.voice_client:
@@ -260,7 +269,10 @@ async def play(ctx, *, search_or_url: str = None):
                 for attempt in range(max_retries):
                     try:
                         voice = await channel.connect()
-                        print(f"[디버그] 음성 채널 연결 성공: {channel_name}")
+                        try:
+                            print(f"[디버그] 음성 채널 연결 성공: {channel_name}")
+                        except UnicodeEncodeError:
+                            print(f"[디버그] 음성 채널 연결 성공: {channel.id}")
                         break
                     except Exception as connect_error:
                         print(f"[오류] 음성 채널 연결 시도 {attempt + 1}/{max_retries} 실패: {str(connect_error)}")
@@ -310,14 +322,10 @@ async def play(ctx, *, search_or_url: str = None):
                     'noplaylist': False
                 }
                 
-                # 먼저 플레이리스트 정보만 확인 (비동기 처리)
-                loop = asyncio.get_event_loop()
+                # 먼저 플레이리스트 정보만 확인
                 with yt_dlp.YoutubeDL(playlist_opts) as ydl:
                     try:
-                        info = await asyncio.wait_for(
-                            loop.run_in_executor(None, ydl.extract_info, search_or_url, False),
-                            timeout=15.0
-                        )
+                        info = ydl.extract_info(search_or_url, download=False)
                         if 'entries' in info:
                             playlist_count = len(info['entries'])
                             if playlist_count > 10:
@@ -329,20 +337,9 @@ async def play(ctx, *, search_or_url: str = None):
                         print(f"플레이리스트 확인 중 오류: {e}")
                         pass  # 플레이리스트가 아닌 경우 무시
 
-                # 실제 음악 정보 추출 (비동기 처리)
-                loop = asyncio.get_event_loop()
+                # 실제 음악 정보 추출
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    try:
-                        info = await asyncio.wait_for(
-                            loop.run_in_executor(None, ydl.extract_info, search_or_url, False),
-                            timeout=30.0
-                        )
-                    except asyncio.TimeoutError:
-                        await ctx.send("```⏰ URL 처리 시간이 초과되었습니다. 다른 URL을 시도해보세요.```")
-                        return
-                    except Exception as extract_error:
-                        await ctx.send(f"```❌ URL 정보 추출 중 오류: {str(extract_error)[:100]}...```")
-                        return
+                    info = ydl.extract_info(search_or_url, download=False)
                     
                     # 플레이리스트인 경우
                     if 'entries' in info:
@@ -372,11 +369,9 @@ async def play(ctx, *, search_or_url: str = None):
                                             "trackStream": False,
                                         }
 
-                                        # 음악 재생 로직 (비동기 처리)
+                                        # 음악 재생 로직
                                         try:
-                                            # FFmpegPCMAudio 소스 생성을 비동기로 처리
-                                            loop = asyncio.get_event_loop()
-                                            source = await loop.run_in_executor(None, lambda: FFmpegPCMAudio(url2, **FFMPEG_OPTIONS))
+                                            source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
                                             current_track = title
                                             voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
                                             await ctx.send(f"```지금 재생 중: {title}```")
@@ -434,16 +429,14 @@ async def play(ctx, *, search_or_url: str = None):
                     "trackStream": False,
                 }
 
-                # 음악 재생 로직 (비동기 처리)
+                # 음악 재생 로직
                 try:
                     # 음성 연결 상태 최종 확인
                     if not voice or not voice.is_connected():
                         await ctx.send("```음성 연결이 끊어졌습니다. 다시 연결해주세요.```")
                         return
                     
-                    # FFmpegPCMAudio 소스 생성을 비동기로 처리
-                    loop = asyncio.get_event_loop()
-                    source = await loop.run_in_executor(None, lambda: FFmpegPCMAudio(url2, **FFMPEG_OPTIONS))
+                    source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
                     current_track = title
                     
                     def after_play(error):
@@ -588,16 +581,14 @@ async def play_next(ctx):
         url, title = queue.pop(0)  
         current_track = title
 
-        # 다음 곡 재생 (비동기 처리)
+        # 다음 곡 재생
         try:
             # 이미 재생 중인지 확인
             if ctx.voice_client.is_playing():
                 print("이미 재생 중이므로 건너뜀")
                 return
             
-            # FFmpegPCMAudio 소스 생성을 비동기로 처리
-            loop = asyncio.get_event_loop()
-            source = await loop.run_in_executor(None, lambda: FFmpegPCMAudio(url, **FFMPEG_OPTIONS))
+            source = FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
             
             def after_play(error):
                 if error:
@@ -862,7 +853,10 @@ async def play_spotify_track(ctx, recommendations, track_index):
                 try:
                     channel = ctx.author.voice.channel
                     channel_name = safe_channel_name(channel)
-                    print(f"[디버그] Spotify 재생 - 음성 채널 연결 시도: {channel_name} (ID: {channel.id})")
+                    try:
+                        print(f"[디버그] Spotify 재생 - 음성 채널 연결 시도: {channel_name} (ID: {channel.id})")
+                    except UnicodeEncodeError:
+                        print(f"[디버그] Spotify 재생 - 음성 채널 연결 시도: {channel.id}")
                     
                     # 기존 음성 연결이 있다면 정리
                     if ctx.voice_client:
@@ -878,7 +872,10 @@ async def play_spotify_track(ctx, recommendations, track_index):
                     for attempt in range(max_retries):
                         try:
                             voice = await channel.connect()
-                            print(f"[디버그] Spotify 재생 - 음성 채널 연결 성공: {channel_name}")
+                            try:
+                                print(f"[디버그] Spotify 재생 - 음성 채널 연결 성공: {channel_name}")
+                            except UnicodeEncodeError:
+                                print(f"[디버그] Spotify 재생 - 음성 채널 연결 성공: {channel.id}")
                             break
                         except Exception as connect_error:
                             print(f"[오류] Spotify 재생 - 음성 채널 연결 시도 {attempt + 1}/{max_retries} 실패: {str(connect_error)}")
@@ -905,9 +902,7 @@ async def play_spotify_track(ctx, recommendations, track_index):
             queue.append((url2, title))
             await ctx.send(f"```'{title}'가 목록에 추가되었습니다!```")
         else:
-            # FFmpegPCMAudio 소스 생성을 비동기로 처리
-            loop = asyncio.get_event_loop()
-            source = await loop.run_in_executor(None, lambda: FFmpegPCMAudio(url2, **FFMPEG_OPTIONS))
+            source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
             voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
             current_track = title  # 현재 재생 중인 곡 설정
             await ctx.send(f"```지금 재생 중: {title}```")
@@ -1365,7 +1360,7 @@ async def auto_similar_mode_stop(ctx):
         await ctx.send("```💡 자동 비슷한 곡 재생 모드가 이미 비활성화되어 있습니다.```")
 
 # Spotify 플레이리스트 재생 명령어
-@client.command(name="playlist", aliases=["pl"])
+@client.command(name="playlist")
 async def spotify_playlist(ctx, *, playlist_url: str = None):
     """Spotify 플레이리스트에서 랜덤 10곡을 재생"""
     if not SPOTIFY_AVAILABLE:
@@ -1418,7 +1413,10 @@ async def spotify_playlist(ctx, *, playlist_url: str = None):
                 try:
                     channel = ctx.author.voice.channel
                     channel_name = safe_channel_name(channel)
-                    print(f"[디버그] 플레이리스트 재생 - 음성 채널 연결 시도: {channel_name}")
+                    try:
+                        print(f"[디버그] 플레이리스트 재생 - 음성 채널 연결 시도: {channel_name}")
+                    except UnicodeEncodeError:
+                        print(f"[디버그] 플레이리스트 재생 - 음성 채널 연결 시도: {channel.id}")
                     
                     # 기존 음성 연결이 있다면 정리
                     if ctx.voice_client:
@@ -1434,7 +1432,10 @@ async def spotify_playlist(ctx, *, playlist_url: str = None):
                     for attempt in range(max_retries):
                         try:
                             voice = await channel.connect()
-                            print(f"[디버그] 플레이리스트 재생 - 음성 채널 연결 성공: {channel_name}")
+                            try:
+                                print(f"[디버그] 플레이리스트 재생 - 음성 채널 연결 성공: {channel_name}")
+                            except UnicodeEncodeError:
+                                print(f"[디버그] 플레이리스트 재생 - 음성 채널 연결 성공: {channel.id}")
                             break
                         except Exception as connect_error:
                             print(f"[오류] 플레이리스트 재생 - 음성 채널 연결 시도 {attempt + 1}/{max_retries} 실패: {str(connect_error)}")
@@ -1467,7 +1468,10 @@ async def spotify_playlist(ctx, *, playlist_url: str = None):
                 if url2:
                     queue.append((url2, title))
                     added_count += 1
-                    print(f"[디버그] 플레이리스트 곡 {i}/{len(tracks)} 추가 성공: {title}")
+                    try:
+                        print(f"[디버그] 플레이리스트 곡 {i}/{len(tracks)} 추가 성공: {title}")
+                    except UnicodeEncodeError:
+                        print(f"[디버그] 플레이리스트 곡 {i}/{len(tracks)} 추가 성공")
                 else:
                     failed_count += 1
                     print(f"[디버그] 플레이리스트 곡 {i}/{len(tracks)} 검색 실패: {search_query}")
