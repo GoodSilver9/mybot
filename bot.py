@@ -43,10 +43,10 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-# env_tokens.txt 파일에서 토큰 읽기
+# .env 파일에서 토큰 읽기 (같은 폴더에서)
 def load_tokens_from_file():
     tokens = {}
-    env_file_path = os.path.join(parent_dir, 'env_tokens.txt')
+    env_file_path = os.path.join(current_dir, '.env')
     
     try:
         with open(env_file_path, 'r', encoding='utf-8') as f:
@@ -59,15 +59,15 @@ def load_tokens_from_file():
                     tokens[key] = value
         return tokens
     except FileNotFoundError:
-        print(f"[오류] env_tokens.txt 파일을 찾을 수 없습니다: {env_file_path}")
+        print(f"[오류] .env 파일을 찾을 수 없습니다: {env_file_path}")
         return {}
     except Exception as e:
-        print(f"[오류] env_tokens.txt 파일 읽기 실패: {str(e)}")
+        print(f"[오류] .env 파일 읽기 실패: {str(e)}")
         return {}
 
 # 토큰 로드
 tokens = load_tokens_from_file()
-TOKEN = tokens.get('DISCORD_BOT_TOKEN')
+TOKEN = tokens.get('DISCORD_BOT_TOKEN')  # .env에서 DISCORD_BOT_TOKEN 사용
 
 # 환경 변수에서 토큰을 먼저 확인
 if not TOKEN:
@@ -86,10 +86,10 @@ if not TOKEN:
             print("[디버그] 토큰 로딩 실패 - 인코딩 문제")
         print(f"[디버그] 현재 디렉토리: {os.getcwd()}")
         print(f"[디버그] sys.path: {sys.path}")
-        print("[경고] 토큰을 찾을 수 없습니다. env_tokens.txt 파일을 확인하세요.")
+        print("[경고] 토큰을 찾을 수 없습니다. .env 파일을 확인하세요.")
         sys.exit(1)
 else:
-    print("[디버그] env_tokens.txt에서 토큰을 로드했습니다.")
+    print("[디버그] .env에서 토큰을 로드했습니다.")
 
 # 딥시크 API
 DEEPSEEK_API_KEY = tokens.get('DEEPSEEK_API_KEY', "sk-27dae9be93c648bb8805a793438f6eb5")
@@ -122,7 +122,8 @@ client = create_bot_client()
 # 봇 실행 상태 플래그
 is_bot_running = False
 
-queue = []  # 재생 대기열
+queue = []  # 재생 대기열 (일반 곡들)
+playlist_queue = []  # 플레이리스트 전용 대기열
 current_track = None  # 현재 재생 중인 곡
 current_track_info = None  # 현재 재생 중인 곡의 상세 정보 (Spotify용)
 is_playing = False  # 현재 재생 중인지 여부
@@ -419,7 +420,11 @@ async def play(ctx, *, search_or_url: str = None):
             # 현재 곡이 재생 중이라면 큐에 추가
             if voice.is_playing():
                 queue.append((url2, title))  
-                await ctx.send(f"```'{title}'가 목록에 추가되었습니다! 현재 목록: {len(queue)}개```")
+                # 플레이리스트 큐가 있는 경우 우선순위 표시
+                if playlist_queue:
+                    await ctx.send(f"```'{title}'가 목록에 추가되었습니다! (플레이리스트 재생 중 - 다음 곡으로 재생됩니다)\n현재 목록: {len(queue)}개```")
+                else:
+                    await ctx.send(f"```'{title}'가 목록에 추가되었습니다! 현재 목록: {len(queue)}개```")
             else:
                 data = {
                     "imageText": title,
@@ -556,11 +561,16 @@ async def skip(ctx):
         await ctx.send("```현재 재생 중인 곡이 없습니다.```")
 
 async def play_next(ctx):
-    global is_playing, current_track, disconnect_task, auto_similar_mode, auto_similar_queue, current_track_info
+    global is_playing, current_track, disconnect_task, auto_similar_mode, auto_similar_queue, current_track_info, playlist_queue
 
-    if len(queue) == 0:  # 재생할 곡이 없는 경우
+    if len(queue) == 0:  # 일반 큐가 비어있는 경우
+        # 플레이리스트 큐에 곡이 있는 경우
+        if playlist_queue:
+            next_track = playlist_queue.pop(0)
+            queue.append(next_track)
+            await ctx.send(f"```🎵 플레이리스트에서 다음 곡을 재생합니다: {next_track[1]}```")
         # 자동 대기열에 곡이 있는 경우
-        if auto_similar_queue:
+        elif auto_similar_queue:
             next_track = auto_similar_queue.pop(0)
             queue.append((next_track['url'], next_track['title']))
             current_track_info = next_track['info']
@@ -900,7 +910,11 @@ async def play_spotify_track(ctx, recommendations, track_index):
         
         if voice.is_playing():
             queue.append((url2, title))
-            await ctx.send(f"```'{title}'가 목록에 추가되었습니다!```")
+            # 플레이리스트 큐가 있는 경우 우선순위 표시
+            if playlist_queue:
+                await ctx.send(f"```'{title}'가 목록에 추가되었습니다! (플레이리스트 재생 중 - 다음 곡으로 재생됩니다)```")
+            else:
+                await ctx.send(f"```'{title}'가 목록에 추가되었습니다!```")
         else:
             source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
             voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
@@ -1466,7 +1480,7 @@ async def spotify_playlist(ctx, *, playlist_url: str = None):
                 url2, title = await search_youtube(search_query)
                 
                 if url2:
-                    queue.append((url2, title))
+                    playlist_queue.append((url2, title))
                     added_count += 1
                     try:
                         print(f"[디버그] 플레이리스트 곡 {i}/{len(tracks)} 추가 성공: {title}")
@@ -1487,10 +1501,10 @@ async def spotify_playlist(ctx, *, playlist_url: str = None):
         
         # 결과 요약
         if added_count > 0:
-            await ctx.send(f"```✅ 플레이리스트에서 {added_count}개 곡을 큐에 추가했습니다!\n\n📊 결과:\n• 성공: {added_count}개\n• 실패: {failed_count}개\n• 현재 큐: {len(queue)}개```")
+            await ctx.send(f"```✅ 플레이리스트에서 {added_count}개 곡을 큐에 추가했습니다!\n\n📊 결과:\n• 성공: {added_count}개\n• 실패: {failed_count}개\n• 플레이리스트 큐: {len(playlist_queue)}개```")
             
             # 현재 재생 중이 아니라면 첫 번째 곡 재생
-            if not voice.is_playing() and queue:
+            if not voice.is_playing() and playlist_queue:
                 await play_next(ctx)
         else:
             await ctx.send("```❌ 플레이리스트에서 재생 가능한 곡을 찾을 수 없습니다.\n\nYouTube에서 해당 곡들을 찾을 수 없었습니다.\n다른 플레이리스트를 시도해보세요.```")
