@@ -12,6 +12,7 @@ from discord import File, FFmpegPCMAudio
 from io import BytesIO
 from PIL import Image, ImageDraw
 from discord.ext import commands
+from discord import ui, ButtonStyle
 from config import create_bot_client, FFMPEG_OPTIONS
 
 # yt-dlp 자동 업데이트 함수
@@ -131,6 +132,121 @@ current_voice_client = None
 disconnect_task = None  # 자동 퇴장 타이머를 위한 변수
 auto_similar_mode = False  # 자동 비슷한 곡 재생 모드
 auto_similar_queue = []  # 자동 비슷한 곡 대기열
+current_music_message = None  # 현재 음악 플레이어 메시지
+
+# 음악 플레이어 컨트롤 버튼 클래스
+class MusicControlView(ui.View):
+    def __init__(self, ctx):
+        super().__init__(timeout=None)  # 타임아웃 없음
+        self.ctx = ctx
+
+    @ui.button(emoji="⏮️", style=ButtonStyle.secondary, custom_id="previous")
+    async def previous_button(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.response.send_message("⏮️ 이전 곡 기능은 준비 중입니다!", ephemeral=True)
+
+    @ui.button(emoji="⏸️", style=ButtonStyle.secondary, custom_id="pause_resume")
+    async def pause_resume_button(self, interaction: discord.Interaction, button: ui.Button):
+        voice = self.ctx.voice_client
+        if voice and voice.is_playing():
+            voice.pause()
+            await interaction.response.send_message("⏸️ 음악이 일시정지되었습니다.", ephemeral=True)
+            # 버튼을 재생 버튼으로 변경
+            button.emoji = "▶️"
+            await interaction.edit_original_response(view=self)
+        elif voice and voice.is_paused():
+            voice.resume()
+            await interaction.response.send_message("▶️ 음악이 재개되었습니다.", ephemeral=True)
+            # 버튼을 일시정지 버튼으로 변경
+            button.emoji = "⏸️"
+            await interaction.edit_original_response(view=self)
+        else:
+            await interaction.response.send_message("❌ 재생 중인 음악이 없습니다.", ephemeral=True)
+
+    @ui.button(emoji="⏭️", style=ButtonStyle.secondary, custom_id="skip")
+    async def skip_button(self, interaction: discord.Interaction, button: ui.Button):
+        voice = self.ctx.voice_client
+        if voice and voice.is_playing():
+            voice.stop()
+            await interaction.response.send_message("⏭️ 다음 곡으로 건너뛰었습니다.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ 재생 중인 음악이 없습니다.", ephemeral=True)
+
+    @ui.button(emoji="📋", style=ButtonStyle.secondary, custom_id="queue")
+    async def queue_button(self, interaction: discord.Interaction, button: ui.Button):
+        global current_track, auto_similar_mode, auto_similar_queue
+        
+        embed = discord.Embed(
+            title="📋 재생 목록",
+            color=0x00ff00
+        )
+        
+        # 현재 재생 중인 곡
+        if current_track:
+            embed.add_field(
+                name="🎵 현재 재생 중",
+                value=f"`{current_track}`",
+                inline=False
+            )
+        
+        # 일반 재생 목록
+        if queue:
+            if len(queue) > 10:
+                queue_list = "\n".join([f"`{idx + 1}. {item[1]}`" for idx, item in enumerate(queue[:10])])
+                queue_list += f"\n... 그리고 {len(queue) - 10}개 더"
+            else:
+                queue_list = "\n".join([f"`{idx + 1}. {item[1]}`" for idx, item in enumerate(queue)])
+            
+            embed.add_field(
+                name="📋 대기 중인 곡들",
+                value=queue_list if queue_list else "없음",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="📋 대기 중인 곡들",
+                value="없음",
+                inline=False
+            )
+        
+        # 자동 비슷한 곡 대기열
+        if auto_similar_queue:
+            if len(auto_similar_queue) > 5:
+                auto_queue_list = "\n".join([f"`{idx + 1}. {item['title']}`" for idx, item in enumerate(auto_similar_queue[:5])])
+                auto_queue_list += f"\n... 그리고 {len(auto_similar_queue) - 5}개 더"
+            else:
+                auto_queue_list = "\n".join([f"`{idx + 1}. {item['title']}`" for idx, item in enumerate(auto_similar_queue)])
+            
+            embed.add_field(
+                name="🔄 자동 비슷한 곡 대기열",
+                value=auto_queue_list,
+                inline=False
+            )
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# 음악 플레이어 임베드 생성 함수
+async def create_music_player_embed(title, artist="알 수 없는 아티스트", thumbnail_url=None):
+    embed = discord.Embed(
+        title="🎵 현재 재생 중",
+        description=f"**{title}**\n👤 {artist}",
+        color=0x1DB954  # Spotify 그린
+    )
+    
+    if thumbnail_url:
+        embed.set_thumbnail(url=thumbnail_url)
+    else:
+        # 기본 음악 아이콘 (실제로는 없는 URL이므로 썸네일 없이 표시됨)
+        pass
+    
+    embed.add_field(
+        name="🎛️ 컨트롤",
+        value="아래 버튼을 사용해서 음악을 조작하세요!",
+        inline=False
+    )
+    
+    embed.set_footer(text="🎶 Discord Music Bot")
+    
+    return embed
 
 
 # Youtube-dl 옵션
@@ -420,11 +536,29 @@ async def play(ctx, *, search_or_url: str = None):
             # 현재 곡이 재생 중이라면 큐에 추가
             if voice.is_playing():
                 queue.append((url2, title))  
-                # 플레이리스트 큐가 있는 경우 우선순위 표시
+                
+                # 큐 추가 임베드 생성
+                embed = discord.Embed(
+                    title="✅ 곡이 대기열에 추가되었습니다!",
+                    description=f"**{title}**",
+                    color=0x00ff00
+                )
+                
                 if playlist_queue:
-                    await ctx.send(f"```'{title}'가 목록에 추가되었습니다! (플레이리스트 재생 중 - 다음 곡으로 재생됩니다)\n현재 목록: {len(queue)}개```")
+                    embed.add_field(
+                        name="📋 대기열 정보",
+                        value=f"현재 대기열: **{len(queue)}개**\n(플레이리스트 재생 중 - 다음 곡으로 재생됩니다)",
+                        inline=False
+                    )
                 else:
-                    await ctx.send(f"```'{title}'가 목록에 추가되었습니다! 현재 목록: {len(queue)}개```")
+                    embed.add_field(
+                        name="📋 대기열 정보", 
+                        value=f"현재 대기열: **{len(queue)}개**",
+                        inline=False
+                    )
+                
+                embed.set_footer(text="🎶 Discord Music Bot")
+                await ctx.send(embed=embed)
             else:
                 data = {
                     "imageText": title,
@@ -450,7 +584,21 @@ async def play(ctx, *, search_or_url: str = None):
                         asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop)
                     
                     voice.play(source, after=after_play)
-                    await ctx.send(f"```지금 재생 중: {title}```")
+                    
+                    # 음악 플레이어 임베드와 컨트롤 버튼 생성
+                    embed = await create_music_player_embed(title)
+                    view = MusicControlView(ctx)
+                    
+                    # 기존 음악 메시지가 있다면 삭제
+                    global current_music_message
+                    if current_music_message:
+                        try:
+                            await current_music_message.delete()
+                        except:
+                            pass
+                    
+                    # 새로운 음악 플레이어 메시지 전송
+                    current_music_message = await ctx.send(embed=embed, view=view)
                 except Exception as play_error:
                     print(f"음악 재생 중 오류: {play_error}")
                     await ctx.send(f"```음악 재생 중 오류가 발생했습니다.\n오류: {str(play_error)[:100]}...```")
@@ -469,37 +617,68 @@ async def play(ctx, *, search_or_url: str = None):
 @client.command()
 async def q(ctx):
     global current_track, auto_similar_mode, auto_similar_queue
-    voice = ctx.voice_client
-
-    # 현재 재생 중인 곡 표시
-    if current_track:
-        await ctx.send(f"```현재 재생 중인 곡: {current_track}```")
-    else:
-        await ctx.send("```현재 재생 중인 곡이 없습니다.```")
-
-    # 일반 재생 목록 표시
-    if queue:
-        # 큐가 너무 길면 나누어서 표시
-        if len(queue) > 10:
-            titles = [f"{idx + 1}. {item[1]}" for idx, item in enumerate(queue[:10])]
-            await ctx.send("```📋 재생 목록 (처음 10개):\n" + "\n".join(titles) + f"\n... 그리고 {len(queue) - 10}개 더```")
-        else:
-            titles = [f"{idx + 1}. {item[1]}" for idx, item in enumerate(queue)]
-            await ctx.send("```📋 재생 목록:\n" + "\n".join(titles) + "```")
-    else:
-        await ctx.send("```📋 현재 재생 목록이 비어 있습니다.```")
     
-    # 자동 비슷한 곡 대기열 표시
-    if auto_similar_queue:
-        # 자동 대기열이 너무 길면 나누어서 표시
-        if len(auto_similar_queue) > 10:
-            auto_titles = [f"{idx + 1}. {item['title']}" for idx, item in enumerate(auto_similar_queue[:10])]
-            await ctx.send("```🔄 자동 비슷한 곡 대기열 (처음 10개):\n" + "\n".join(auto_titles) + f"\n... 그리고 {len(auto_similar_queue) - 10}개 더```")
-        else:
-            auto_titles = [f"{idx + 1}. {item['title']}" for idx, item in enumerate(auto_similar_queue)]
-            await ctx.send("```🔄 자동 비슷한 곡 대기열:\n" + "\n".join(auto_titles) + "```")
+    embed = discord.Embed(
+        title="📋 재생 목록",
+        color=0x00ff00
+    )
+    
+    # 현재 재생 중인 곡
+    if current_track:
+        embed.add_field(
+            name="🎵 현재 재생 중",
+            value=f"`{current_track}`",
+            inline=False
+        )
     else:
-        await ctx.send("```🔄 자동 비슷한 곡 대기열이 비어 있습니다.\n.auto 명령어로 비슷한 곡을 추가할 수 있습니다.```")
+        embed.add_field(
+            name="🎵 현재 재생 중",
+            value="없음",
+            inline=False
+        )
+    
+    # 일반 재생 목록
+    if queue:
+        if len(queue) > 10:
+            queue_list = "\n".join([f"`{idx + 1}. {item[1]}`" for idx, item in enumerate(queue[:10])])
+            queue_list += f"\n... 그리고 {len(queue) - 10}개 더"
+        else:
+            queue_list = "\n".join([f"`{idx + 1}. {item[1]}`" for idx, item in enumerate(queue)])
+        
+        embed.add_field(
+            name="📋 대기 중인 곡들",
+            value=queue_list if queue_list else "없음",
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="📋 대기 중인 곡들",
+            value="없음",
+            inline=False
+        )
+    
+    # 자동 비슷한 곡 대기열
+    if auto_similar_queue:
+        if len(auto_similar_queue) > 5:
+            auto_queue_list = "\n".join([f"`{idx + 1}. {item['title']}`" for idx, item in enumerate(auto_similar_queue[:5])])
+            auto_queue_list += f"\n... 그리고 {len(auto_similar_queue) - 5}개 더"
+        else:
+            auto_queue_list = "\n".join([f"`{idx + 1}. {item['title']}`" for idx, item in enumerate(auto_similar_queue)])
+        
+        embed.add_field(
+            name="🔄 자동 비슷한 곡 대기열",
+            value=auto_queue_list,
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="🔄 자동 비슷한 곡 대기열",
+            value="없음 (`.auto` 명령어로 활성화)",
+            inline=False
+        )
+    
+    embed.set_footer(text="🎶 Discord Music Bot")
+    await ctx.send(embed=embed)
 
 @client.command()
 async def clear(ctx):
@@ -606,7 +785,21 @@ async def play_next(ctx):
                 asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop)
             
             ctx.voice_client.play(source, after=after_play)
-            await ctx.send(f"```지금 재생 중: {title}```")
+            
+            # 음악 플레이어 임베드와 컨트롤 버튼 생성
+            embed = await create_music_player_embed(title)
+            view = MusicControlView(ctx)
+            
+            # 기존 음악 메시지가 있다면 삭제
+            global current_music_message
+            if current_music_message:
+                try:
+                    await current_music_message.delete()
+                except:
+                    pass
+            
+            # 새로운 음악 플레이어 메시지 전송
+            current_music_message = await ctx.send(embed=embed, view=view)
         except Exception as play_error:
             print(f"다음 곡 재생 중 오류: {play_error}")
             await ctx.send(f"```다음 곡 재생 중 오류가 발생했습니다.\n'{title}' 건너뛰고 다음 곡을 재생합니다.```")
