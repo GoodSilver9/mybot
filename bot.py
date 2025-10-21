@@ -126,6 +126,7 @@ is_bot_running = False
 queue = []  # 재생 대기열 (일반 곡들)
 playlist_queue = []  # 플레이리스트 전용 대기열
 current_track = None  # 현재 재생 중인 곡
+current_track_thumbnail = None  # 현재 재생 중인 곡의 썸네일
 current_track_info = None  # 현재 재생 중인 곡의 상세 정보 (Spotify용)
 is_playing = False  # 현재 재생 중인지 여부
 current_voice_client = None 
@@ -177,7 +178,7 @@ class MusicControlView(ui.View):
         
         embed = discord.Embed(
             title="📋 재생 목록",
-            color=0x00ff00
+            color=0x5DADE2  # 연한 하늘색
         )
         
         # 현재 재생 중인 곡
@@ -228,23 +229,17 @@ class MusicControlView(ui.View):
 async def create_music_player_embed(title, artist="알 수 없는 아티스트", thumbnail_url=None):
     embed = discord.Embed(
         title="🎵 현재 재생 중",
-        description=f"**{title}**\n👤 {artist}",
-        color=0x1DB954  # Spotify 그린
+        description=f"**{title}**",
+        color=0x5DADE2  # 연한 하늘색
     )
     
     if thumbnail_url:
-        embed.set_thumbnail(url=thumbnail_url)
+        print(f"[디버그] 썸네일 URL: {thumbnail_url}")  # 디버그용
+        embed.set_image(url=thumbnail_url)  # 더 큰 이미지로 표시
     else:
-        # 기본 음악 아이콘 (실제로는 없는 URL이므로 썸네일 없이 표시됨)
-        pass
+        print("[디버그] 썸네일 URL이 없습니다")  # 디버그용
     
-    embed.add_field(
-        name="🎛️ 컨트롤",
-        value="아래 버튼을 사용해서 음악을 조작하세요!",
-        inline=False
-    )
-    
-    embed.set_footer(text="🎶 Discord Music Bot")
+    embed.set_footer(text="🎶 YouTube Music Player", icon_url="https://www.youtube.com/s/desktop/d743f786/img/favicon_96x96.png")
     
     return embed
 
@@ -260,6 +255,11 @@ ydl_opts = {
     }],
     'youtube_include_dash_manifest': False,
     'no_warnings': True,  # 경고 메시지 숨기기
+    'socket_timeout': 30,  # 소켓 타임아웃 30초
+    'retries': 3,  # 재시도 횟수
+    'fragment_retries': 3,  # 프래그먼트 재시도
+    'extractor_retries': 3,  # 추출기 재시도
+    'http_chunk_size': 10485760,  # HTTP 청크 크기 (10MB)
 }
 
 # 봇 준비 이벤트
@@ -347,7 +347,7 @@ def extract_video_id(url):
 
 @client.command(aliases=['p'])
 async def play(ctx, *, search_or_url: str = None):  
-    global current_track, disconnect_task, auto_similar_mode
+    global current_track, current_track_thumbnail, disconnect_task, auto_similar_mode, current_music_message
 
     # 자동 재생 모드가 활성화된 경우 경고 메시지
     if auto_similar_mode:
@@ -430,8 +430,8 @@ async def play(ctx, *, search_or_url: str = None):
         try:
             # URL로 입력된 경우
             if search_or_url.startswith("http"):
-                # 로딩 메시지 표시
-                loading_msg = await ctx.send("```🔄 URL 정보를 가져오는 중...```")
+                # 로딩 메시지 표시 (10초 후 자동 삭제)
+                loading_msg = await ctx.send("```🔄 URL 정보를 가져오는 중...```", delete_after=10)
                 # 플레이리스트 항목 수 확인을 위한 옵션
                 playlist_opts = {
                     'quiet': True,
@@ -446,10 +446,10 @@ async def play(ctx, *, search_or_url: str = None):
                         if 'entries' in info:
                             playlist_count = len(info['entries'])
                             if playlist_count > 10:
-                                await ctx.send("```플레이리스트는 최대 10개의 곡까지만 지원합니다. 더 적은 수의 곡을 선택해주세요.```")
+                                await ctx.send("```플레이리스트는 최대 10개의 곡까지만 지원합니다. 더 적은 수의 곡을 선택해주세요.```", delete_after=10)
                                 return
                             elif playlist_count > 1:
-                                await ctx.send(f"```플레이리스트에서 {playlist_count}개의 곡을 추가합니다...```")
+                                await ctx.send(f"```플레이리스트에서 {playlist_count}개의 곡을 추가합니다...```", delete_after=10)
                     except Exception as e:
                         print(f"플레이리스트 확인 중 오류: {e}")
                         pass  # 플레이리스트가 아닌 경우 무시
@@ -466,6 +466,7 @@ async def play(ctx, *, search_or_url: str = None):
                                 try:
                                     url2 = entry['url']
                                     title = entry.get('title', '알 수 없는 제목')
+                                    entry_thumbnail = entry.get('thumbnail')
                                     
                                     # 음성 연결 상태 재확인
                                     if not voice or not voice.is_connected():
@@ -474,7 +475,7 @@ async def play(ctx, *, search_or_url: str = None):
                                     
                                     # 현재 곡이 재생 중이라면 큐에 추가
                                     if voice.is_playing():
-                                        queue.append((url2, title))
+                                        queue.append((url2, title, entry_thumbnail))
                                         added_count += 1
                                     else:
                                         # 첫 번째 곡은 바로 재생
@@ -491,7 +492,7 @@ async def play(ctx, *, search_or_url: str = None):
                                             source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
                                             current_track = title
                                             voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
-                                            await ctx.send(f"```지금 재생 중: {title}```")
+                                            # 음악 플레이어 임베드가 표시되므로 추가 메시지 불필요
                                             added_count += 1
                                             break  # 첫 번째 곡만 재생하고 나머지는 큐에 추가
                                         except Exception as play_error:
@@ -504,9 +505,9 @@ async def play(ctx, *, search_or_url: str = None):
                                     continue
                         
                         if added_count > 0:
-                            await ctx.send(f"```플레이리스트에서 {added_count}개의 곡을 추가했습니다!```")
+                            await ctx.send(f"```플레이리스트에서 {added_count}개의 곡을 추가했습니다!```", delete_after=5)
                         else:
-                            await ctx.send("```플레이리스트에서 곡을 추가할 수 없습니다.```")
+                            await ctx.send("```플레이리스트에서 곡을 추가할 수 없습니다.```", delete_after=5)
                         return
                     else:
                         # 단일 곡인 경우
@@ -515,7 +516,7 @@ async def play(ctx, *, search_or_url: str = None):
                         thumbnail_url = info.get('thumbnail')  # YouTube 썸네일 URL
                         video_id = info.get('id')  # video_id 추출
             else:  # 검색어로 입력된 경우
-                url2, title = await search_youtube(search_or_url)
+                url2, title, thumbnail_url = await search_youtube(search_or_url)
                 video_id = None
                 if url2:
                     try:
@@ -535,30 +536,23 @@ async def play(ctx, *, search_or_url: str = None):
 
             # 현재 곡이 재생 중이라면 큐에 추가
             if voice.is_playing():
-                queue.append((url2, title))  
+                queue.append((url2, title, thumbnail_url))  
                 
-                # 큐 추가 임베드 생성
-                embed = discord.Embed(
-                    title="✅ 곡이 대기열에 추가되었습니다!",
-                    description=f"**{title}**",
-                    color=0x00ff00
-                )
+                # 큐 추가 알림 (3초 후 자동 삭제)
+                await ctx.send(f"```✅ '{title}'가 대기열에 추가되었습니다! (대기열: {len(queue)}개)```", delete_after=3)
                 
-                if playlist_queue:
-                    embed.add_field(
-                        name="📋 대기열 정보",
-                        value=f"현재 대기열: **{len(queue)}개**\n(플레이리스트 재생 중 - 다음 곡으로 재생됩니다)",
-                        inline=False
-                    )
-                else:
-                    embed.add_field(
-                        name="📋 대기열 정보", 
-                        value=f"현재 대기열: **{len(queue)}개**",
-                        inline=False
-                    )
+                # 기존 음악 플레이어를 삭제하고 새로 아래에 표시
+                if current_music_message:
+                    try:
+                        await current_music_message.delete()
+                    except:
+                        pass
                 
-                embed.set_footer(text="🎶 Discord Music Bot")
-                await ctx.send(embed=embed)
+                # 현재 재생 중인 곡으로 새 음악 플레이어 생성
+                if current_track:
+                    embed = await create_music_player_embed(current_track, thumbnail_url=current_track_thumbnail)
+                    view = MusicControlView(ctx)
+                    current_music_message = await ctx.send(embed=embed, view=view)
             else:
                 data = {
                     "imageText": title,
@@ -577,6 +571,7 @@ async def play(ctx, *, search_or_url: str = None):
                     
                     source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
                     current_track = title
+                    current_track_thumbnail = thumbnail_url
                     
                     def after_play(error):
                         if error:
@@ -586,11 +581,10 @@ async def play(ctx, *, search_or_url: str = None):
                     voice.play(source, after=after_play)
                     
                     # 음악 플레이어 임베드와 컨트롤 버튼 생성
-                    embed = await create_music_player_embed(title)
+                    embed = await create_music_player_embed(title, thumbnail_url=thumbnail_url)
                     view = MusicControlView(ctx)
                     
                     # 기존 음악 메시지가 있다면 삭제
-                    global current_music_message
                     if current_music_message:
                         try:
                             await current_music_message.delete()
@@ -620,7 +614,7 @@ async def q(ctx):
     
     embed = discord.Embed(
         title="📋 재생 목록",
-        color=0x00ff00
+        color=0x5DADE2  # 연한 하늘색
     )
     
     # 현재 재생 중인 곡
@@ -740,20 +734,19 @@ async def skip(ctx):
         await ctx.send("```현재 재생 중인 곡이 없습니다.```")
 
 async def play_next(ctx):
-    global is_playing, current_track, disconnect_task, auto_similar_mode, auto_similar_queue, current_track_info, playlist_queue
+    global is_playing, current_track, current_track_thumbnail, disconnect_task, auto_similar_mode, auto_similar_queue, current_track_info, playlist_queue, current_music_message
 
     if len(queue) == 0:  # 일반 큐가 비어있는 경우
         # 플레이리스트 큐에 곡이 있는 경우
         if playlist_queue:
             next_track = playlist_queue.pop(0)
             queue.append(next_track)
-            await ctx.send(f"```🎵 플레이리스트에서 다음 곡을 재생합니다: {next_track[1]}```")
         # 자동 대기열에 곡이 있는 경우
         elif auto_similar_queue:
             next_track = auto_similar_queue.pop(0)
-            queue.append((next_track['url'], next_track['title']))
+            thumbnail = next_track.get('thumbnail')
+            queue.append((next_track['url'], next_track['title'], thumbnail))
             current_track_info = next_track['info']
-            await ctx.send(f"```🎵 자동으로 비슷한 곡을 재생합니다: {next_track['title']}```")
         else:
             is_playing = False
             current_track = None
@@ -767,8 +760,15 @@ async def play_next(ctx):
 
     try:
         is_playing = True
-        url, title = queue.pop(0)  
+        # 큐에서 곡 정보 가져오기 (썸네일 포함)
+        queue_item = queue.pop(0)
+        if len(queue_item) == 3:
+            url, title, thumbnail_url = queue_item
+        else:
+            url, title = queue_item
+            thumbnail_url = None
         current_track = title
+        current_track_thumbnail = thumbnail_url
 
         # 다음 곡 재생
         try:
@@ -787,11 +787,10 @@ async def play_next(ctx):
             ctx.voice_client.play(source, after=after_play)
             
             # 음악 플레이어 임베드와 컨트롤 버튼 생성
-            embed = await create_music_player_embed(title)
+            embed = await create_music_player_embed(title, thumbnail_url=thumbnail_url)
             view = MusicControlView(ctx)
             
             # 기존 음악 메시지가 있다면 삭제
-            global current_music_message
             if current_music_message:
                 try:
                     await current_music_message.delete()
@@ -840,34 +839,37 @@ async def search_youtube(query):
         'retries': 3,  # 재시도 횟수
     }
 
-    # 재시도 로직 (최대 3번)
-    for attempt in range(3):
+    # 재시도 로직 (최대 5번)
+    for attempt in range(5):
         try:
             # 비동기로 실행하여 타임아웃 설정
             loop = asyncio.get_event_loop()
             with yt_dlp.YoutubeDL(ydl_opts_search) as ydl:
-                # 30초 타임아웃으로 실행
+                # 45초 타임아웃으로 실행 (더 길게)
                 info = await asyncio.wait_for(
                     loop.run_in_executor(None, ydl.extract_info, f"ytsearch:{query}", False),
-                    timeout=30.0
+                    timeout=45.0
                 )
                 if 'entries' in info and len(info['entries']) > 0:
                     first_result = info['entries'][0]
                     if first_result and 'url' in first_result and 'title' in first_result:
-                        return first_result['url'], first_result['title']
-                return None, None
+                        thumbnail = first_result.get('thumbnail')
+                        return first_result['url'], first_result['title'], thumbnail
+                return None, None, None
         except asyncio.TimeoutError:
-            print(f"YouTube 검색 타임아웃 (시도 {attempt + 1}/3): {query}")
-            if attempt < 2:
-                await asyncio.sleep(2)
+            print(f"YouTube 검색 타임아웃 (시도 {attempt + 1}/5): {query}")
+            if attempt < 4:  # 5번째 시도가 아니면 대기 후 재시도
+                wait_time = 2 ** attempt  # 지수 백오프: 1초, 2초, 4초, 8초
+                await asyncio.sleep(wait_time)
                 continue
-            return None, None
+            return None, None, None
         except Exception as e:
-            print(f"YouTube 검색 중 오류 (시도 {attempt + 1}/3): {e}")
-            if attempt < 2:  # 마지막 시도가 아니면 2초 대기 후 재시도
-                await asyncio.sleep(2)
+            print(f"YouTube 검색 중 오류 (시도 {attempt + 1}/5): {e}")
+            if attempt < 4:  # 5번째 시도가 아니면 대기 후 재시도
+                wait_time = 2 ** attempt  # 지수 백오프: 1초, 2초, 4초, 8초
+                await asyncio.sleep(wait_time)
                 continue
-            return None, None
+            return None, None, None
         
 # 번역 함수 (비동기)
 async def translate_text(text, target_lang):
@@ -1036,7 +1038,7 @@ async def search(ctx, *, query):
 # Spotify 트랙 재생 함수 (이 함수는 유지)
 async def play_spotify_track(ctx, recommendations, track_index):
     """Spotify 추천 트랙을 YouTube에서 검색하여 재생"""
-    global current_track_info, current_track
+    global current_track_info, current_track, current_track_thumbnail, current_music_message
     
     if track_index >= len(recommendations):
         await ctx.send("```❌ 잘못된 번호입니다.```")
@@ -1045,10 +1047,10 @@ async def play_spotify_track(ctx, recommendations, track_index):
     selected_track = recommendations[track_index]
     search_query = f"{selected_track['name']} {selected_track['artist']}"
     
-    await ctx.send(f"```�� '{search_query}' 재생을 시작합니다!```")
+    await ctx.send(f"```🎵 '{search_query}' 재생을 시작합니다!```", delete_after=5)
     
     # 기존 play 명령어 로직 사용
-    url2, title = await search_youtube(search_query)
+    url2, title, thumbnail_url = await search_youtube(search_query)
     if url2:
         voice = ctx.voice_client
         if not voice or not voice.is_connected():
@@ -1102,17 +1104,44 @@ async def play_spotify_track(ctx, recommendations, track_index):
                 return
         
         if voice.is_playing():
-            queue.append((url2, title))
-            # 플레이리스트 큐가 있는 경우 우선순위 표시
+            queue.append((url2, title, thumbnail_url))
+            # 큐 추가 알림 (3초 후 자동 삭제)
             if playlist_queue:
-                await ctx.send(f"```'{title}'가 목록에 추가되었습니다! (플레이리스트 재생 중 - 다음 곡으로 재생됩니다)```")
+                await ctx.send(f"```✅ '{title}'가 대기열에 추가되었습니다! (플레이리스트 재생 중)```", delete_after=3)
             else:
-                await ctx.send(f"```'{title}'가 목록에 추가되었습니다!```")
+                await ctx.send(f"```✅ '{title}'가 대기열에 추가되었습니다! (대기열: {len(queue)}개)```", delete_after=3)
+            
+            # 기존 음악 플레이어를 삭제하고 새로 아래에 표시
+            if current_music_message:
+                try:
+                    await current_music_message.delete()
+                except:
+                    pass
+            
+            # 현재 재생 중인 곡으로 새 음악 플레이어 생성
+            if current_track:
+                embed = await create_music_player_embed(current_track, thumbnail_url=current_track_thumbnail)
+                view = MusicControlView(ctx)
+                current_music_message = await ctx.send(embed=embed, view=view)
         else:
             source = FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
             voice.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
             current_track = title  # 현재 재생 중인 곡 설정
-            await ctx.send(f"```지금 재생 중: {title}```")
+            current_track_thumbnail = thumbnail_url  # 현재 재생 중인 곡의 썸네일 저장
+            
+            # 음악 플레이어 임베드와 컨트롤 버튼 생성
+            embed = await create_music_player_embed(title, thumbnail_url=thumbnail_url)
+            view = MusicControlView(ctx)
+            
+            # 기존 음악 메시지가 있다면 삭제
+            if current_music_message:
+                try:
+                    await current_music_message.delete()
+                except:
+                    pass
+            
+            # 새로운 음악 플레이어 메시지 전송
+            current_music_message = await ctx.send(embed=embed, view=view)
             
             # 현재 재생 중인 곡 정보 저장 (비슷한 음악 추천용)
             current_track_info = {
@@ -1172,7 +1201,7 @@ async def mind_recommend(ctx, *, query: str = None):
         embed = discord.Embed(
             title="🎵 Spotify 음악 추천",
             description=f"'{query}'에 맞는 음악을 추천해드려요!\n\n**사용법:**\n✅ 자동 재생 (1번 곡)\n1️⃣~5️⃣ 번호 선택 (여러 개 선택 가능)\n.ps <번호> 명령어\n❌ 취소",
-            color=0x1DB954  # Spotify 그린
+            color=0x5DADE2  # 연한 하늘색
         )
         
         for i, track in enumerate(recommendations[:5], 1):
@@ -1277,7 +1306,7 @@ async def spotify_search(ctx, *, query: str = None):
         embed = discord.Embed(
             title="🔍 Spotify 검색 결과",
             description=f"'{query}' 검색 결과\n\n**사용법:**\n✅ 자동 재생 (1번 곡)\n1️⃣~5️⃣ 번호 선택 (여러 개 선택 가능)\n.ps <번호> 명령어\n❌ 취소",
-            color=0x1DB954
+            color=0x5DADE2  # 연한 하늘색
         )
         
         for i, track in enumerate(tracks, 1):
@@ -1410,7 +1439,7 @@ async def similar_tracks(ctx):
         embed = discord.Embed(
             title="🎵 비슷한 음악 추천",
             description=f"'{current_track_info['name']}' - {current_track_info['artist']}와 비슷한 음악들\n\n**사용법:**\n✅ 자동 재생 (1번 곡)\n1️⃣~5️⃣ 번호 선택 (여러 개 선택 가능)\n.ps <번호> 명령어\n❌ 취소",
-            color=0x1DB954
+            color=0x5DADE2  # 연한 하늘색
         )
         
         for i, track in enumerate(similar_tracks, 1):
@@ -1514,13 +1543,14 @@ async def auto_similar(ctx):
                     for selected_track in similar_tracks:
                         try:
                             search_query = f"{selected_track['name']} {selected_track['artist']}"
-                            url2, title = await search_youtube(search_query)
+                            url2, title, thumbnail_url = await search_youtube(search_query)
                             
                             if url2:
                                 # 자동 대기열에 추가 (일반 대기열이 아닌)
                                 auto_similar_queue.append({
                                     'url': url2,
                                     'title': title,
+                                    'thumbnail': thumbnail_url,
                                     'info': {
                                         'name': selected_track['name'],
                                         'artist': selected_track['artist'],
@@ -1593,7 +1623,7 @@ async def spotify_playlist(ctx, *, playlist_url: str = None):
         embed = discord.Embed(
             title="🎵 Spotify 플레이리스트 재생",
             description=f"**{playlist_info['name']}**\n\n📝 {playlist_info['description'][:100]}{'...' if len(playlist_info['description']) > 100 else ''}\n📊 총 곡 수: {playlist_info['total_tracks']}개\n🎲 랜덤 선택: {len(tracks)}개",
-            color=0x1DB954,
+            color=0x5DADE2,  # 연한 하늘색
             url=playlist_info['external_url']
         )
         
@@ -1670,10 +1700,10 @@ async def spotify_playlist(ctx, *, playlist_url: str = None):
         for i, track in enumerate(tracks, 1):
             try:
                 search_query = f"{track['name']} {track['artist']}"
-                url2, title = await search_youtube(search_query)
+                url2, title, thumbnail_url = await search_youtube(search_query)
                 
                 if url2:
-                    playlist_queue.append((url2, title))
+                    playlist_queue.append((url2, title, thumbnail_url))
                     added_count += 1
                     try:
                         print(f"[디버그] 플레이리스트 곡 {i}/{len(tracks)} 추가 성공: {title}")
