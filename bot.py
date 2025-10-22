@@ -244,7 +244,7 @@ async def create_music_player_embed(title, artist="알 수 없는 아티스트",
     return embed
 
 
-# Youtube-dl 옵션
+# Youtube-dl 옵션 (403 오류 해결을 위한 개선)
 ydl_opts = {
     'quiet': True,  # 로그 출력 줄이기
     'format': 'bestaudio/best',
@@ -256,10 +256,21 @@ ydl_opts = {
     'youtube_include_dash_manifest': False,
     'no_warnings': True,  # 경고 메시지 숨기기
     'socket_timeout': 30,  # 소켓 타임아웃 30초
-    'retries': 3,  # 재시도 횟수
-    'fragment_retries': 3,  # 프래그먼트 재시도
-    'extractor_retries': 3,  # 추출기 재시도
+    'retries': 5,  # 재시도 횟수 증가
+    'fragment_retries': 5,  # 프래그먼트 재시도 증가
+    'extractor_retries': 5,  # 추출기 재시도 증가
     'http_chunk_size': 10485760,  # HTTP 청크 크기 (10MB)
+    # 403 오류 해결을 위한 추가 옵션
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'referer': 'https://www.youtube.com/',
+    'cookies': None,  # 쿠키 사용 안함
+    'extractor_args': {
+        'youtube': {
+            'skip': ['dash', 'hls'],
+            'player_skip': ['configs'],
+            'player_client': ['android', 'web']
+        }
+    }
 }
 
 # 봇 준비 이벤트
@@ -836,7 +847,18 @@ async def search_youtube(query):
         'youtube_include_dash_manifest': False,
         'no_warnings': True,
         'socket_timeout': 30,  # 소켓 타임아웃 30초
-        'retries': 3,  # 재시도 횟수
+        'retries': 5,  # 재시도 횟수 증가
+        # 403 오류 해결을 위한 추가 옵션
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'referer': 'https://www.youtube.com/',
+        'cookies': None,  # 쿠키 사용 안함
+        'extractor_args': {
+            'youtube': {
+                'skip': ['dash', 'hls'],
+                'player_skip': ['configs'],
+                'player_client': ['android', 'web']
+            }
+        }
     }
 
     # 재시도 로직 (최대 5번)

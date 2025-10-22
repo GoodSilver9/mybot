@@ -2,17 +2,17 @@
 # 최신 버전으로 업데이트된 패키지 목록
 
 # Discord.py - Discord 봇 프레임워크
-discord.py==2.5.2
+discord.py==2.6.4
 
 # HTTP 클라이언트 라이브러리
-aiohttp==3.12.15
-requests==2.32.4
+aiohttp==3.13.1
+requests==2.32.5
 
 # 이미지 처리
-Pillow==11.3.0
+Pillow==12.0.0
 
 # YouTube 다운로더
-yt-dlp==2025.7.21
+yt-dlp==2025.10.14
 
 # Windows 시스템 관련 (install.py, gui.py용)
 pywin32>=310
