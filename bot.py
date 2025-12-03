@@ -469,7 +469,7 @@ async def get_fresh_url(video_id_or_url, max_retries=3):
     """video_id 또는 URL로부터 새로운 재생 URL을 가져옵니다 (만료 방지)"""
     ydl_opts_fresh = {
         'quiet': True,
-        'format': 'bestaudio/best',
+        'format': 'bestaudio[acodec=opus]/bestaudio/best',  # Opus 코덱 우선 (최고 품질)
         'noplaylist': True,
         'no_warnings': True,
         'socket_timeout': 30,
@@ -1051,13 +1051,13 @@ async def play_next(ctx):
 async def search_youtube(query):
     ydl_opts_search = {
         'quiet': True,
-        'format': 'bestaudio/best',
+        'format': 'bestaudio[acodec=opus]/bestaudio/best',  # Opus 코덱 우선 (최고 품질)
         'default_search': 'ytsearch',  
         'noplaylist': True,  
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
+            'preferredcodec': 'opus',  # Opus 코덱 (고품질)
+            'preferredquality': '320',  # 최고 품질
         }],
         'youtube_include_dash_manifest': False,
         'no_warnings': True,
