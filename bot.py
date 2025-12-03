@@ -15,29 +15,41 @@ from discord.ext import commands
 from discord import ui, ButtonStyle
 from config import create_bot_client, FFMPEG_OPTIONS
 
-# yt-dlp 자동 업데이트 함수
-def update_yt_dlp():
+# 패키지 업데이트 함수
+def update_package(package_name):
+    """지정된 패키지를 업데이트합니다."""
     try:
-        print("[시스템] yt-dlp 업데이트를 확인하는 중...")
-        result = subprocess.run([sys.executable, '-m', 'pip', 'install', '-U', 'yt-dlp'], 
-                              capture_output=True, text=True, timeout=60)
+        print(f"[시스템] {package_name} 업데이트를 확인하는 중...")
+        result = subprocess.run(
+            [sys.executable, '-m', 'pip', 'install', '-U', package_name], 
+            capture_output=True, text=True, timeout=60
+        )
         
         if result.returncode == 0:
-            print("[시스템] yt-dlp 업데이트 완료!")
+            if "already satisfied" in result.stdout.lower() or "already up-to-date" in result.stdout.lower():
+                print(f"[시스템] {package_name}이(가) 이미 최신 버전입니다.")
+            else:
+                print(f"[시스템] {package_name} 업데이트 완료!")
             return True
         else:
-            print(f"[경고] yt-dlp 업데이트 실패: {result.stderr}")
+            print(f"[경고] {package_name} 업데이트 실패: {result.stderr}")
             return False
     except subprocess.TimeoutExpired:
-        print("[경고] yt-dlp 업데이트 시간 초과 (60초)")
+        print(f"[경고] {package_name} 업데이트 시간 초과 (60초)")
         return False
     except Exception as e:
-        print(f"[경고] yt-dlp 업데이트 중 오류: {str(e)}")
+        print(f"[경고] {package_name} 업데이트 중 오류: {str(e)}")
         return False
 
-# 봇 시작 시 yt-dlp 업데이트 실행
+def update_all_packages():
+    """모든 필수 패키지를 업데이트합니다."""
+    packages = ['yt-dlp', 'discord.py']
+    for package in packages:
+        update_package(package)
+
+# 봇 시작 시 패키지 업데이트 실행
 print("[시스템] 봇 시작 중...")
-update_yt_dlp()
+update_all_packages()
 
 # Token 파일 경로 설정
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -134,6 +146,11 @@ disconnect_task = None  # 자동 퇴장 타이머를 위한 변수
 auto_similar_mode = False  # 자동 비슷한 곡 재생 모드
 auto_similar_queue = []  # 자동 비슷한 곡 대기열
 current_music_message = None  # 현재 음악 플레이어 메시지
+
+# URL 캐싱 시스템 (video_id -> {url, title, thumbnail, timestamp})
+import time
+url_cache = {}
+URL_CACHE_EXPIRY = 3600  # URL 캐시 만료 시간 (1시간)
 
 # 음악 플레이어 컨트롤 버튼 클래스
 class MusicControlView(ui.View):
@@ -277,6 +294,15 @@ ydl_opts = {
 @client.event
 async def on_ready():
     print(f'Logged in as {client.user}')
+    # 주기적으로 만료된 캐시 정리하는 태스크 시작
+    client.loop.create_task(periodic_cache_cleanup())
+
+async def periodic_cache_cleanup():
+    """10분마다 만료된 캐시를 정리합니다."""
+    while True:
+        await asyncio.sleep(600)  # 10분 대기
+        clear_expired_cache()
+        print(f"[시스템] 만료된 URL 캐시 정리 완료 (현재 캐시: {len(url_cache)}개)")
 
 # 안전한 채널명 처리 함수
 def safe_channel_name(channel):
@@ -346,6 +372,89 @@ def generate_song_card(data):
         with open("default_card.png", "rb") as f:
             return BytesIO(f.read())
 
+# URL 캐시 관련 함수
+def get_cached_url(video_id):
+    """캐시에서 URL을 가져옵니다."""
+    if video_id in url_cache:
+        cached = url_cache[video_id]
+        # 만료 여부 확인
+        if time.time() - cached['timestamp'] < URL_CACHE_EXPIRY:
+            return cached['url'], cached['title'], cached['thumbnail']
+        else:
+            # 만료된 캐시 삭제
+            del url_cache[video_id]
+    return None, None, None
+
+def cache_url(video_id, url, title, thumbnail):
+    """URL을 캐시에 저장합니다."""
+    if video_id:
+        url_cache[video_id] = {
+            'url': url,
+            'title': title,
+            'thumbnail': thumbnail,
+            'timestamp': time.time()
+        }
+
+def clear_expired_cache():
+    """만료된 캐시를 정리합니다."""
+    current_time = time.time()
+    expired_keys = [k for k, v in url_cache.items() if current_time - v['timestamp'] >= URL_CACHE_EXPIRY]
+    for key in expired_keys:
+        del url_cache[key]
+
+async def prefetch_urls_parallel(tracks, max_concurrent=3):
+    """여러 트랙의 URL을 병렬로 미리 가져옵니다."""
+    semaphore = asyncio.Semaphore(max_concurrent)  # 동시 요청 수 제한
+    results = []
+    
+    async def fetch_single(track, index):
+        async with semaphore:
+            search_query = f"{track['name']} {track['artist']}"
+            try:
+                url, title, thumbnail = await search_youtube(search_query)
+                if url:
+                    video_id = None
+                    try:
+                        video_id = extract_video_id_from_url(url)
+                    except:
+                        pass
+                    # 캐시에 저장
+                    if video_id:
+                        cache_url(video_id, url, title, thumbnail)
+                    return (index, url, title, thumbnail, video_id, True)
+                return (index, None, None, None, None, False)
+            except Exception as e:
+                print(f"[병렬 URL 추출] 트랙 {index+1} 실패: {e}")
+                return (index, None, None, None, None, False)
+    
+    # 모든 트랙에 대해 병렬로 URL 추출
+    tasks = [fetch_single(track, i) for i, track in enumerate(tracks)]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # 결과 정리
+    success_results = []
+    for result in results:
+        if isinstance(result, Exception):
+            continue
+        if result[5]:  # success flag
+            success_results.append(result)
+    
+    return success_results
+
+def extract_video_id_from_url(url):
+    """URL에서 video_id를 추출합니다 (간단한 파싱)."""
+    if 'youtube.com/watch?v=' in url:
+        try:
+            return url.split('v=')[1].split('&')[0]
+        except:
+            pass
+    elif 'youtu.be/' in url:
+        try:
+            return url.split('youtu.be/')[1].split('?')[0]
+        except:
+            pass
+    return None
+
 def extract_video_id(url):
     ydl_opts = {'quiet': True, 'no_warnings': True}
     try:
@@ -355,6 +464,54 @@ def extract_video_id(url):
     except Exception as e:
         print(f"video_id 추출 중 오류: {e}")
         return None
+
+async def get_fresh_url(video_id_or_url, max_retries=3):
+    """video_id 또는 URL로부터 새로운 재생 URL을 가져옵니다 (만료 방지)"""
+    ydl_opts_fresh = {
+        'quiet': True,
+        'format': 'bestaudio/best',
+        'noplaylist': True,
+        'no_warnings': True,
+        'socket_timeout': 30,
+        'retries': 3,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'referer': 'https://www.youtube.com/',
+        'extractor_args': {
+            'youtube': {
+                'skip': ['dash', 'hls'],
+                'player_skip': ['configs'],
+                'player_client': ['android', 'web']
+            }
+        }
+    }
+    
+    # video_id인 경우 YouTube URL로 변환
+    if video_id_or_url and not video_id_or_url.startswith('http'):
+        video_id_or_url = f"https://www.youtube.com/watch?v={video_id_or_url}"
+    
+    for attempt in range(max_retries):
+        try:
+            loop = asyncio.get_event_loop()
+            with yt_dlp.YoutubeDL(ydl_opts_fresh) as ydl:
+                # 30초 타임아웃으로 실행
+                info = await asyncio.wait_for(
+                    loop.run_in_executor(None, ydl.extract_info, video_id_or_url, False),
+                    timeout=30.0
+                )
+                if info and 'url' in info:
+                    return info['url'], info.get('title'), info.get('thumbnail')
+        except asyncio.TimeoutError:
+            print(f"URL 재추출 타임아웃 (시도 {attempt + 1}/{max_retries})")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)  # 지수 백오프: 1초, 2초, 4초
+                continue
+        except Exception as e:
+            print(f"URL 재추출 오류 (시도 {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+    
+    return None, None, None
 
 @client.command(aliases=['p'])
 async def play(ctx, *, search_or_url: str = None):  
@@ -478,15 +635,16 @@ async def play(ctx, *, search_or_url: str = None):
                                     url2 = entry['url']
                                     title = entry.get('title', '알 수 없는 제목')
                                     entry_thumbnail = entry.get('thumbnail')
+                                    entry_video_id = entry.get('id')  # video_id 추출
                                     
                                     # 음성 연결 상태 재확인
                                     if not voice or not voice.is_connected():
                                         await ctx.send("```음성 연결이 끊어졌습니다. 다시 연결해주세요.```")
                                         return
                                     
-                                    # 현재 곡이 재생 중이라면 큐에 추가
+                                    # 현재 곡이 재생 중이라면 큐에 추가 (video_id 포함)
                                     if voice.is_playing():
-                                        queue.append((url2, title, entry_thumbnail))
+                                        queue.append((url2, title, entry_thumbnail, entry_video_id))
                                         added_count += 1
                                     else:
                                         # 첫 번째 곡은 바로 재생
@@ -545,9 +703,9 @@ async def play(ctx, *, search_or_url: str = None):
                 await ctx.send("```음성 연결이 끊어졌습니다. 다시 연결해주세요.```")
                 return
 
-            # 현재 곡이 재생 중이라면 큐에 추가
+            # 현재 곡이 재생 중이라면 큐에 추가 (video_id 포함)
             if voice.is_playing():
-                queue.append((url2, title, thumbnail_url))  
+                queue.append((url2, title, thumbnail_url, video_id))  
                 
                 # 큐 추가 알림 (3초 후 자동 삭제)
                 await ctx.send(f"```✅ '{title}'가 대기열에 추가되었습니다! (대기열: {len(queue)}개)```", delete_after=3)
@@ -756,7 +914,8 @@ async def play_next(ctx):
         elif auto_similar_queue:
             next_track = auto_similar_queue.pop(0)
             thumbnail = next_track.get('thumbnail')
-            queue.append((next_track['url'], next_track['title'], thumbnail))
+            # 자동 큐에서는 기존 방식 유지 (URL 포함)
+            queue.append((next_track['url'], next_track['title'], thumbnail, None))
             current_track_info = next_track['info']
         else:
             is_playing = False
@@ -771,13 +930,20 @@ async def play_next(ctx):
 
     try:
         is_playing = True
-        # 큐에서 곡 정보 가져오기 (썸네일 포함)
+        # 큐에서 곡 정보 가져오기 (video_id 포함)
         queue_item = queue.pop(0)
-        if len(queue_item) == 3:
+        
+        # 큐 아이템 파싱 (하위 호환성 유지)
+        if len(queue_item) >= 4:
+            url, title, thumbnail_url, video_id = queue_item[0], queue_item[1], queue_item[2], queue_item[3]
+        elif len(queue_item) == 3:
             url, title, thumbnail_url = queue_item
+            video_id = None
         else:
             url, title = queue_item
             thumbnail_url = None
+            video_id = None
+        
         current_track = title
         current_track_thumbnail = thumbnail_url
 
@@ -787,6 +953,55 @@ async def play_next(ctx):
             if ctx.voice_client.is_playing():
                 print("이미 재생 중이므로 건너뜀")
                 return
+            
+            # video_id가 있으면 먼저 캐시 확인, 없으면 새로운 URL 가져오기
+            if video_id:
+                # 1. 먼저 캐시에서 확인
+                cached_url, cached_title, cached_thumbnail = get_cached_url(video_id)
+                if cached_url:
+                    url = cached_url
+                    print(f"[재생] 캐시에서 URL 로드 성공: {title}")
+                    if cached_title:
+                        title = cached_title
+                        current_track = title
+                    if cached_thumbnail:
+                        thumbnail_url = cached_thumbnail
+                        current_track_thumbnail = thumbnail_url
+                else:
+                    # 2. 캐시에 없으면 새 URL 가져오기 (최대 3번 재시도)
+                    print(f"[재생] video_id로 새 URL 가져오는 중: {video_id}")
+                    fresh_url, fresh_title, fresh_thumbnail = await get_fresh_url(video_id, max_retries=3)
+                    
+                    if fresh_url:
+                        url = fresh_url
+                        # 캐시에 저장
+                        cache_url(video_id, fresh_url, fresh_title or title, fresh_thumbnail or thumbnail_url)
+                        print(f"[재생] 새 URL 가져오기 성공: {title}")
+                        if fresh_title:
+                            title = fresh_title
+                            current_track = title
+                        if fresh_thumbnail:
+                            thumbnail_url = fresh_thumbnail
+                            current_track_thumbnail = thumbnail_url
+                    else:
+                        # URL 재추출 실패 - 제목으로 재검색 시도
+                        print(f"[경고] URL 재추출 실패, 제목으로 재검색 시도: {title}")
+                        search_url, search_title, search_thumbnail = await search_youtube(title)
+                        if search_url:
+                            url = search_url
+                            print(f"[재생] 제목 검색으로 URL 복구 성공: {title}")
+                        else:
+                            # 최종 실패 - 곡 스킵
+                            print(f"[오류] URL 재추출 최종 실패, 곡 스킵: {title}")
+                            await ctx.send(f"```⚠️ '{title}' 재생 실패\n다음 곡으로 넘어갑니다.```")
+                            if len(queue) > 0 or playlist_queue or (auto_similar_mode and auto_similar_queue):
+                                await asyncio.sleep(0.5)
+                                await play_next(ctx)
+                            else:
+                                is_playing = False
+                                current_track = None
+                                await ctx.send("```재생할 곡이 더 이상 없습니다.```")
+                            return
             
             source = FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
             
@@ -812,10 +1027,10 @@ async def play_next(ctx):
             current_music_message = await ctx.send(embed=embed, view=view)
         except Exception as play_error:
             print(f"다음 곡 재생 중 오류: {play_error}")
-            await ctx.send(f"```다음 곡 재생 중 오류가 발생했습니다.\n'{title}' 건너뛰고 다음 곡을 재생합니다.```")
-            # 오류가 발생한 경우 다음 곡으로 넘어가기 (재귀 호출 방지)
-            if len(queue) > 0 or (auto_similar_mode and auto_similar_queue):
-                await asyncio.sleep(1)  # 1초 대기 후 재시도
+            await ctx.send(f"```⚠️ '{title}' 재생 중 오류 발생\n다음 곡으로 넘어갑니다.```")
+            # 오류가 발생한 경우 다음 곡으로 넘어가기
+            if len(queue) > 0 or playlist_queue or (auto_similar_mode and auto_similar_queue):
+                await asyncio.sleep(1)  # 1초 대기 후 다음 곡
                 await play_next(ctx)
             else:
                 is_playing = False
@@ -823,10 +1038,10 @@ async def play_next(ctx):
                 await ctx.send("```재생할 곡이 더 이상 없습니다.```")
     except Exception as e:
         print(f"다음 곡 재생 중 오류: {e}")
-        await ctx.send(f"```다음 곡 재생 중 오류가 발생했습니다: {str(e)}```")
-        # 오류가 발생한 경우 다음 곡으로 넘어가기 (재귀 호출 방지)
-        if len(queue) > 0 or (auto_similar_mode and auto_similar_queue):
-            await asyncio.sleep(1)  # 1초 대기 후 재시도
+        await ctx.send(f"```다음 곡 재생 중 오류가 발생했습니다: {str(e)[:100]}```")
+        # 오류가 발생한 경우 다음 곡으로 넘어가기
+        if len(queue) > 0 or playlist_queue or (auto_similar_mode and auto_similar_queue):
+            await asyncio.sleep(1)  # 1초 대기 후 다음 곡
             await play_next(ctx)
         else:
             is_playing = False
@@ -876,7 +1091,13 @@ async def search_youtube(query):
                     first_result = info['entries'][0]
                     if first_result and 'url' in first_result and 'title' in first_result:
                         thumbnail = first_result.get('thumbnail')
-                        return first_result['url'], first_result['title'], thumbnail
+                        url = first_result['url']
+                        title = first_result['title']
+                        # video_id 추출 및 캐시 저장
+                        video_id = first_result.get('id') or extract_video_id_from_url(url)
+                        if video_id:
+                            cache_url(video_id, url, title, thumbnail)
+                        return url, title, thumbnail
                 return None, None, None
         except asyncio.TimeoutError:
             print(f"YouTube 검색 타임아웃 (시도 {attempt + 1}/5): {query}")
@@ -1074,6 +1295,13 @@ async def play_spotify_track(ctx, recommendations, track_index):
     # 기존 play 명령어 로직 사용
     url2, title, thumbnail_url = await search_youtube(search_query)
     if url2:
+        # video_id 추출
+        video_id = None
+        try:
+            video_id = extract_video_id(url2)
+        except Exception as e:
+            print(f"video_id 추출 실패: {e}")
+        
         voice = ctx.voice_client
         if not voice or not voice.is_connected():
             if ctx.author.voice:
@@ -1126,7 +1354,7 @@ async def play_spotify_track(ctx, recommendations, track_index):
                 return
         
         if voice.is_playing():
-            queue.append((url2, title, thumbnail_url))
+            queue.append((url2, title, thumbnail_url, video_id))
             # 큐 추가 알림 (3초 후 자동 삭제)
             if playlist_queue:
                 await ctx.send(f"```✅ '{title}'가 대기열에 추가되었습니다! (플레이리스트 재생 중)```", delete_after=3)
@@ -1713,36 +1941,27 @@ async def spotify_playlist(ctx, *, playlist_url: str = None):
                 await ctx.send("```음성 채널에 먼저 접속해주세요.```")
                 return
         
-        # 각 트랙을 YouTube에서 검색하여 큐에 추가
+        # 병렬로 모든 트랙의 URL을 미리 가져오기
+        await ctx.send("```🔄 YouTube에서 곡들을 병렬로 검색하는 중... (더 빠름!)```")
+        
+        # 병렬 URL 추출 (최대 3개 동시)
+        prefetch_results = await prefetch_urls_parallel(tracks, max_concurrent=3)
+        
         added_count = 0
-        failed_count = 0
+        failed_count = len(tracks) - len(prefetch_results)
         
-        await ctx.send("```🔄 YouTube에서 곡들을 검색하는 중...```")
+        # 성공한 결과를 playlist_queue에 추가 (원래 순서대로)
+        prefetch_results.sort(key=lambda x: x[0])  # index 기준 정렬
         
-        for i, track in enumerate(tracks, 1):
-            try:
-                search_query = f"{track['name']} {track['artist']}"
-                url2, title, thumbnail_url = await search_youtube(search_query)
-                
-                if url2:
-                    playlist_queue.append((url2, title, thumbnail_url))
-                    added_count += 1
-                    try:
-                        print(f"[디버그] 플레이리스트 곡 {i}/{len(tracks)} 추가 성공: {title}")
-                    except UnicodeEncodeError:
-                        print(f"[디버그] 플레이리스트 곡 {i}/{len(tracks)} 추가 성공")
-                else:
-                    failed_count += 1
-                    print(f"[디버그] 플레이리스트 곡 {i}/{len(tracks)} 검색 실패: {search_query}")
-                
-                # 진행 상황 표시 (5곡마다)
-                if i % 5 == 0 or i == len(tracks):
-                    await ctx.send(f"```📊 진행 상황: {i}/{len(tracks)} 곡 처리 완료```")
-                
-            except Exception as e:
-                failed_count += 1
-                print(f"[디버그] 플레이리스트 곡 {i}/{len(tracks)} 처리 중 오류: {e}")
-                continue
+        for result in prefetch_results:
+            index, url2, title, thumbnail_url, video_id, success = result
+            if success and url2:
+                playlist_queue.append((url2, title, thumbnail_url, video_id))
+                added_count += 1
+                try:
+                    print(f"[디버그] 플레이리스트 곡 {index+1}/{len(tracks)} 추가 성공: {title}")
+                except UnicodeEncodeError:
+                    print(f"[디버그] 플레이리스트 곡 {index+1}/{len(tracks)} 추가 성공")
         
         # 결과 요약
         if added_count > 0:
