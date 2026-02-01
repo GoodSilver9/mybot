@@ -36,3 +36,9 @@ config.py
 #임시 아이콘콘
 .temp_icon
 temp_icon.ico
+
+# AI 작업 노트 (프로젝트 내부 문서)
+AI_WORK_NOTES.md
+
+# 임시 파일
+*.tmp

@@ -8,12 +8,18 @@ import json
 import subprocess
 import base64
 import aiohttp
+import random
+from concurrent.futures import ProcessPoolExecutor
 from discord import File, FFmpegPCMAudio
 from io import BytesIO
 from PIL import Image, ImageDraw
 from discord.ext import commands
 from discord import ui, ButtonStyle
 from config import create_bot_client, FFMPEG_OPTIONS
+
+# 별도 프로세스 풀 (CPU 집약적 작업용 - yt-dlp)
+# 메인 봇 스레드를 블로킹하지 않음
+yt_executor = ProcessPoolExecutor(max_workers=2)
 
 # 패키지 업데이트 함수
 def update_package(package_name):
@@ -153,110 +159,151 @@ url_cache = {}
 URL_CACHE_EXPIRY = 3600  # URL 캐시 만료 시간 (1시간)
 
 # 음악 플레이어 컨트롤 버튼 클래스
+# 셔플 모드 전역 변수
+shuffle_mode = False
+
 class MusicControlView(ui.View):
     def __init__(self, ctx):
-        super().__init__(timeout=None)  # 타임아웃 없음
+        super().__init__(timeout=None)
         self.ctx = ctx
 
-    @ui.button(emoji="⏮️", style=ButtonStyle.secondary, custom_id="previous")
-    async def previous_button(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_message("⏮️ 이전 곡 기능은 준비 중입니다!", ephemeral=True)
+    # 커스텀 이모지 ID
+    EMOJI_PLAY = discord.PartialEmoji(name="1_play", id=1467459287642144841)
+    EMOJI_PAUSE = discord.PartialEmoji(name="2_pause", id=1467459302410289327)
+    EMOJI_STOP = discord.PartialEmoji(name="3_stop", id=1467459315722883158)
+    EMOJI_SKIP = discord.PartialEmoji(name="4_skip_forward", id=1467459327408210064)
 
-    @ui.button(emoji="⏸️", style=ButtonStyle.secondary, custom_id="pause_resume")
+    # 1. 정지
+    @ui.button(emoji=EMOJI_STOP, style=ButtonStyle.secondary, custom_id="stop")
+    async def stop_button(self, interaction: discord.Interaction, button: ui.Button):
+        global is_playing, current_track, auto_similar_mode
+        voice = self.ctx.voice_client
+        
+        if voice:
+            queue.clear()
+            playlist_queue.clear()
+            auto_similar_queue.clear()
+            auto_similar_mode = False
+            is_playing = False
+            current_track = None
+            
+            if voice.is_playing() or voice.is_paused():
+                voice.stop()
+            
+            await voice.disconnect()
+            await interaction.response.defer()
+        else:
+            await interaction.response.defer()
+
+    # 2. 재생/일시정지
+    @ui.button(emoji=EMOJI_PAUSE, style=ButtonStyle.secondary, custom_id="pause_resume")
     async def pause_resume_button(self, interaction: discord.Interaction, button: ui.Button):
         voice = self.ctx.voice_client
         if voice and voice.is_playing():
             voice.pause()
-            await interaction.response.send_message("⏸️ 음악이 일시정지되었습니다.", ephemeral=True)
-            # 버튼을 재생 버튼으로 변경
-            button.emoji = "▶️"
-            await interaction.edit_original_response(view=self)
+            button.emoji = discord.PartialEmoji(name="1_play", id=1467459287642144841)
+            await interaction.response.edit_message(view=self)
         elif voice and voice.is_paused():
             voice.resume()
-            await interaction.response.send_message("▶️ 음악이 재개되었습니다.", ephemeral=True)
-            # 버튼을 일시정지 버튼으로 변경
-            button.emoji = "⏸️"
-            await interaction.edit_original_response(view=self)
+            button.emoji = discord.PartialEmoji(name="2_pause", id=1467459302410289327)
+            await interaction.response.edit_message(view=self)
         else:
-            await interaction.response.send_message("❌ 재생 중인 음악이 없습니다.", ephemeral=True)
+            await interaction.response.defer()
 
-    @ui.button(emoji="⏭️", style=ButtonStyle.secondary, custom_id="skip")
+    # 3. 다음곡
+    @ui.button(emoji=EMOJI_SKIP, style=ButtonStyle.secondary, custom_id="skip")
     async def skip_button(self, interaction: discord.Interaction, button: ui.Button):
         voice = self.ctx.voice_client
-        if voice and voice.is_playing():
+        if voice and (voice.is_playing() or voice.is_paused()):
             voice.stop()
-            await interaction.response.send_message("⏭️ 다음 곡으로 건너뛰었습니다.", ephemeral=True)
+            await interaction.response.defer()
         else:
-            await interaction.response.send_message("❌ 재생 중인 음악이 없습니다.", ephemeral=True)
+            await interaction.response.defer()
 
+    # 4. 대기열
     @ui.button(emoji="📋", style=ButtonStyle.secondary, custom_id="queue")
     async def queue_button(self, interaction: discord.Interaction, button: ui.Button):
-        global current_track, auto_similar_mode, auto_similar_queue
+        global current_track, playlist_queue, auto_similar_queue, auto_similar_mode
         
         embed = discord.Embed(
-            title="📋 재생 목록",
-            color=0x5DADE2  # 연한 하늘색
+            title="📋 대기열",
+            color=0x2B2D31
         )
         
-        # 현재 재생 중인 곡
+        # 현재 재생 중
         if current_track:
             embed.add_field(
                 name="🎵 현재 재생 중",
-                value=f"`{current_track}`",
+                value=f"**{current_track}**",
                 inline=False
             )
         
-        # 일반 재생 목록
-        if queue:
-            if len(queue) > 10:
-                queue_list = "\n".join([f"`{idx + 1}. {item[1]}`" for idx, item in enumerate(queue[:10])])
-                queue_list += f"\n... 그리고 {len(queue) - 10}개 더"
-            else:
-                queue_list = "\n".join([f"`{idx + 1}. {item[1]}`" for idx, item in enumerate(queue)])
+        # 모든 대기열 합치기 (queue + playlist_queue)
+        all_queue = list(queue) + list(playlist_queue)
+        
+        if all_queue:
+            queue_lines = []
+            for idx, item in enumerate(all_queue[:8]):
+                title = item[1] if len(item) > 1 else str(item)
+                if len(title) > 40:
+                    title = title[:37] + "..."
+                queue_lines.append(f"`{idx + 1}` {title}")
+            
+            if len(all_queue) > 8:
+                queue_lines.append(f"*... +{len(all_queue) - 8}곡 더*")
             
             embed.add_field(
-                name="📋 대기 중인 곡들",
-                value=queue_list if queue_list else "없음",
+                name=f"다음 곡 ({len(all_queue)})",
+                value="\n".join(queue_lines),
                 inline=False
             )
         else:
-            embed.add_field(
-                name="📋 대기 중인 곡들",
-                value="없음",
-                inline=False
-            )
+            embed.add_field(name="다음 곡", value="*비어 있음*", inline=False)
         
-        # 자동 비슷한 곡 대기열
-        if auto_similar_queue:
-            if len(auto_similar_queue) > 5:
-                auto_queue_list = "\n".join([f"`{idx + 1}. {item['title']}`" for idx, item in enumerate(auto_similar_queue[:5])])
-                auto_queue_list += f"\n... 그리고 {len(auto_similar_queue) - 5}개 더"
-            else:
-                auto_queue_list = "\n".join([f"`{idx + 1}. {item['title']}`" for idx, item in enumerate(auto_similar_queue)])
-            
+        # 자동 재생 대기열
+        if auto_similar_mode and auto_similar_queue:
             embed.add_field(
-                name="🔄 자동 비슷한 곡 대기열",
-                value=auto_queue_list,
+                name=f"🔄 자동 재생 ({len(auto_similar_queue)})",
+                value="비슷한 곡이 자동으로 추가됩니다",
                 inline=False
             )
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+def format_duration(seconds):
+    """초를 MM:SS 형식으로 변환"""
+    if not seconds:
+        return "??:??"
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    return f"{minutes}:{secs:02d}"
+
 # 음악 플레이어 임베드 생성 함수
-async def create_music_player_embed(title, artist="알 수 없는 아티스트", thumbnail_url=None):
-    embed = discord.Embed(
-        title="🎵 현재 재생 중",
-        description=f"**{title}**",
-        color=0x5DADE2  # 연한 하늘색
+async def create_music_player_embed(title, artist="알 수 없는 아티스트", thumbnail_url=None, duration=None, requester=None):
+    # Discord 다크 테마에 어울리는 색상
+    embed = discord.Embed(color=0x2B2D31)  # Discord 다크 배경과 어울리는 색
+    
+    # 심플한 제목
+    embed.set_author(
+        name="♪ Now Playing",
+        icon_url="https://i.imgur.com/DfBTLnS.png"  # 심플한 음표 아이콘
     )
     
-    if thumbnail_url:
-        print(f"[디버그] 썸네일 URL: {thumbnail_url}")  # 디버그용
-        embed.set_image(url=thumbnail_url)  # 더 큰 이미지로 표시
-    else:
-        print("[디버그] 썸네일 URL이 없습니다")  # 디버그용
+    # 곡 제목 (깔끔하게)
+    embed.title = title
     
-    embed.set_footer(text="🎶 YouTube Music Player", icon_url="https://www.youtube.com/s/desktop/d743f786/img/favicon_96x96.png")
+    # 썸네일 (큰 이미지로)
+    if thumbnail_url:
+        embed.set_image(url=thumbnail_url)
+    
+    # 푸터 (미니멀하게)
+    queue_count = len(queue) + len(playlist_queue)
+    footer_text = f"📋 대기: {queue_count}곡"
+    
+    embed.set_footer(
+        text=footer_text,
+        icon_url="https://www.youtube.com/s/desktop/d743f786/img/favicon_96x96.png"
+    )
     
     return embed
 
@@ -409,9 +456,16 @@ async def prefetch_urls_parallel(tracks, max_concurrent=3):
     
     async def fetch_single(track, index):
         async with semaphore:
+            # 이벤트 루프에 제어권을 넘겨줌 (heartbeat 유지)
+            await asyncio.sleep(0)
+            
             search_query = f"{track['name']} {track['artist']}"
             try:
                 url, title, thumbnail = await search_youtube(search_query)
+                
+                # 결과 처리 전에 이벤트 루프에 제어권 넘김
+                await asyncio.sleep(0)
+                
                 if url:
                     video_id = None
                     try:
@@ -428,12 +482,18 @@ async def prefetch_urls_parallel(tracks, max_concurrent=3):
                 return (index, None, None, None, None, False)
     
     # 모든 트랙에 대해 병렬로 URL 추출
+    # 이벤트 루프에 제어권을 넘겨줌
+    await asyncio.sleep(0)
     tasks = [fetch_single(track, i) for i, track in enumerate(tracks)]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # 결과 정리
     success_results = []
     for result in results:
+        # 루프 중간에 이벤트 루프에 제어권 넘김 (heartbeat 유지)
+        # 0.1초 대기로 Discord heartbeat가 확실히 작동하도록 함
+        await asyncio.sleep(0.1)
+        
         if isinstance(result, Exception):
             continue
         if result[5]:  # success flag
@@ -1048,72 +1108,101 @@ async def play_next(ctx):
             current_track = None
             await ctx.send("```재생할 곡이 더 이상 없습니다.```")
 
-async def search_youtube(query):
-    ydl_opts_search = {
+def _extract_youtube_info_sync(query: str) -> dict:
+    """
+    별도 프로세스에서 실행되는 동기 yt-dlp 함수.
+    메인 봇 스레드를 블로킹하지 않음.
+    """
+    ydl_opts = {
         'quiet': True,
-        'format': 'bestaudio[acodec=opus]/bestaudio/best',  # Opus 코덱 우선 (최고 품질)
-        'default_search': 'ytsearch',  
-        'noplaylist': True,  
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'opus',  # Opus 코덱 (고품질)
-            'preferredquality': '320',  # 최고 품질
-        }],
+        'format': 'bestaudio[acodec=opus]/bestaudio/best',
+        'default_search': 'ytsearch',
+        'noplaylist': True,
         'youtube_include_dash_manifest': False,
         'no_warnings': True,
-        'socket_timeout': 30,  # 소켓 타임아웃 30초
-        'retries': 5,  # 재시도 횟수 증가
-        # 403 오류 해결을 위한 추가 옵션
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'socket_timeout': 25,
+        'retries': 3,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'referer': 'https://www.youtube.com/',
-        'cookies': None,  # 쿠키 사용 안함
         'extractor_args': {
             'youtube': {
                 'skip': ['dash', 'hls'],
                 'player_skip': ['configs'],
                 'player_client': ['android', 'web']
             }
-        }
+        },
+        'ignoreerrors': True,
     }
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"ytsearch:{query}", download=False)
+            if info and 'entries' in info and len(info['entries']) > 0:
+                first_result = info['entries'][0]
+                if first_result and 'url' in first_result and 'title' in first_result:
+                    return {
+                        'url': first_result['url'],
+                        'title': first_result['title'],
+                        'thumbnail': first_result.get('thumbnail'),
+                        'id': first_result.get('id'),
+                        'duration': first_result.get('duration'),
+                        'uploader': first_result.get('uploader', '알 수 없음'),
+                    }
+        return None
+    except Exception as e:
+        print(f"[yt-dlp 프로세스] 오류: {e}")
+        return None
 
-    # 재시도 로직 (최대 5번)
-    for attempt in range(5):
+
+async def search_youtube(query):
+    """
+    YouTube 검색 - 별도 프로세스에서 실행하여 메인 봇 블로킹 방지
+    """
+    # 재시도 로직 (최대 3번)
+    for attempt in range(3):
         try:
-            # 비동기로 실행하여 타임아웃 설정
+            # 이벤트 루프에 제어권을 넘겨줌 (heartbeat 유지)
+            await asyncio.sleep(0)
+            
+            # 별도 프로세스에서 실행 (메인 봇 블로킹 없음)
             loop = asyncio.get_event_loop()
-            with yt_dlp.YoutubeDL(ydl_opts_search) as ydl:
-                # 45초 타임아웃으로 실행 (더 길게)
-                info = await asyncio.wait_for(
-                    loop.run_in_executor(None, ydl.extract_info, f"ytsearch:{query}", False),
-                    timeout=45.0
-                )
-                if 'entries' in info and len(info['entries']) > 0:
-                    first_result = info['entries'][0]
-                    if first_result and 'url' in first_result and 'title' in first_result:
-                        thumbnail = first_result.get('thumbnail')
-                        url = first_result['url']
-                        title = first_result['title']
-                        # video_id 추출 및 캐시 저장
-                        video_id = first_result.get('id') or extract_video_id_from_url(url)
-                        if video_id:
-                            cache_url(video_id, url, title, thumbnail)
-                        return url, title, thumbnail
-                return None, None, None
+            result = await asyncio.wait_for(
+                loop.run_in_executor(yt_executor, _extract_youtube_info_sync, query),
+                timeout=30.0
+            )
+            
+            # 결과 처리 전에 이벤트 루프에 제어권 넘김
+            await asyncio.sleep(0)
+            
+            if result:
+                url = result['url']
+                title = result['title']
+                thumbnail = result.get('thumbnail')
+                video_id = result.get('id') or extract_video_id_from_url(url)
+                
+                # 캐시에 저장
+                if video_id:
+                    cache_url(video_id, url, title, thumbnail)
+                
+                return url, title, thumbnail
+            
+            return None, None, None
+            
         except asyncio.TimeoutError:
-            print(f"YouTube 검색 타임아웃 (시도 {attempt + 1}/5): {query}")
-            if attempt < 4:  # 5번째 시도가 아니면 대기 후 재시도
-                wait_time = 2 ** attempt  # 지수 백오프: 1초, 2초, 4초, 8초
-                await asyncio.sleep(wait_time)
+            print(f"YouTube 검색 타임아웃 (시도 {attempt + 1}/3): {query}")
+            if attempt < 2:
+                await asyncio.sleep(1)
                 continue
             return None, None, None
         except Exception as e:
-            print(f"YouTube 검색 중 오류 (시도 {attempt + 1}/5): {e}")
-            if attempt < 4:  # 5번째 시도가 아니면 대기 후 재시도
-                wait_time = 2 ** attempt  # 지수 백오프: 1초, 2초, 4초, 8초
-                await asyncio.sleep(wait_time)
+            print(f"YouTube 검색 중 오류 (시도 {attempt + 1}/3): {e}")
+            if attempt < 2:
+                await asyncio.sleep(1)
                 continue
             return None, None, None
-        
+    
+    return None, None, None
+
 # 번역 함수 (비동기)
 async def translate_text(text, target_lang):
     headers = {
@@ -1954,6 +2043,10 @@ async def spotify_playlist(ctx, *, playlist_url: str = None):
         prefetch_results.sort(key=lambda x: x[0])  # index 기준 정렬
         
         for result in prefetch_results:
+            # 루프 중간에 이벤트 루프에 제어권 넘김 (heartbeat 유지)
+            # 0.1초 대기로 Discord heartbeat가 확실히 작동하도록 함
+            await asyncio.sleep(0.1)
+            
             index, url2, title, thumbnail_url, video_id, success = result
             if success and url2:
                 playlist_queue.append((url2, title, thumbnail_url, video_id))
@@ -1977,37 +2070,80 @@ async def spotify_playlist(ctx, *, playlist_url: str = None):
         print(f"[디버그] 플레이리스트 재생 중 오류: {e}")
         await ctx.send(f"```❌ 플레이리스트 재생 중 오류가 발생했습니다: {str(e)[:200]}...```")
 
-if __name__ == "__main__":
+async def graceful_shutdown():
+    """안전한 종료 - 리소스 정리"""
+    print("[종료] 안전한 종료를 시작합니다...")
+    
+    # 1. 음성 연결 정리
     try:
+        for vc in client.voice_clients:
+            if vc.is_connected():
+                if vc.is_playing():
+                    vc.stop()
+                await vc.disconnect()
+                print(f"[종료] 음성 연결 해제: {vc.guild.name if vc.guild else 'Unknown'}")
+    except Exception as e:
+        print(f"[종료] 음성 연결 정리 중 오류: {e}")
+    
+    # 2. ProcessPoolExecutor 정리
+    try:
+        yt_executor.shutdown(wait=False, cancel_futures=True)
+        print("[종료] yt_executor 정리 완료")
+    except Exception as e:
+        print(f"[종료] executor 정리 중 오류: {e}")
+    
+    # 3. 대기열 비우기
+    queue.clear()
+    playlist_queue.clear()
+    auto_similar_queue.clear()
+    print("[종료] 대기열 정리 완료")
+    
+    # 4. 클라이언트 종료
+    try:
+        await client.close()
+        print("[종료] Discord 클라이언트 종료 완료")
+    except Exception as e:
+        print(f"[종료] 클라이언트 종료 중 오류: {e}")
+    
+    print("[종료] 안전한 종료 완료!")
+
+
+def signal_handler(signum, frame):
+    """시그널 핸들러 (SIGTERM, SIGINT)"""
+    print(f"\n[종료] 시그널 {signum} 수신, 종료 시작...")
+    
+    try:
+        # 이벤트 루프에서 graceful_shutdown 실행
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(graceful_shutdown())
+        else:
+            loop.run_until_complete(graceful_shutdown())
+    except Exception as e:
+        print(f"[종료] 시그널 핸들러 오류: {e}")
+    finally:
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    import signal
+    
+    # 시그널 핸들러 등록 (안전한 종료)
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    try:
+        print("[시작] 봇을 시작합니다...")
         client.run(TOKEN)
     except KeyboardInterrupt:
-        print("봇을 종료합니다...")
-        # 음성 연결 정리
-        try:
-            for vc in client.voice_clients:
-                if vc.is_connected():
-                    client.loop.run_until_complete(vc.disconnect())
-        except Exception as e:
-            print(f"음성 연결 정리 중 오류: {e}")
-        
-        # 클라이언트 정리
-        try:
-            client.loop.run_until_complete(client.close())
-        except Exception as e:
-            print(f"클라이언트 정리 중 오류: {e}")
-        
+        print("\n[종료] 키보드 인터럽트 감지...")
+        asyncio.get_event_loop().run_until_complete(graceful_shutdown())
         sys.exit(0)
     except Exception as e:
-        print(f"오류 발생: {str(e)}")
-        # 에러 발생 시에도 정리
+        print(f"[오류] 예상치 못한 오류: {str(e)}")
         try:
-            for vc in client.voice_clients:
-                if vc.is_connected():
-                    client.loop.run_until_complete(vc.disconnect())
+            asyncio.get_event_loop().run_until_complete(graceful_shutdown())
         except:
             pass
-        try:
-            client.loop.run_until_complete(client.close())
-        except:
-            pass
+        sys.exit(1)
         sys.exit(1)
