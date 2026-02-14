@@ -14,29 +14,10 @@ Pillow==12.0.0
 # YouTube 다운로더
 yt-dlp==2025.10.14
 
-# Windows 시스템 관련 (install.py, gui.py용)
+# Windows 시스템 관련 (gui.py용)
 pywin32>=310
-infi.systray>=0.1.12.1
+infi.systray
 psutil>=7.0.0
-
-# GUI 관련
-tkinter
-
-# 비동기 지원
-asyncio
-
-# 시스템 관련
-subprocess
-sys
-os
-json
-base64
-winreg
-pathlib
-threading
-time
-logging
-datetime
 
 # 기타 의존성
 aiohappyeyeballs>=2.6.1
