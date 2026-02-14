@@ -337,6 +337,13 @@ ydl_opts = {
     }
 }
 
+# 존재하지 않는 명령어 무시 (다른 봇의 prefix와 겹치는 경우 등)
+@client.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    raise error
+
 # 봇 준비 이벤트
 @client.event
 async def on_ready():
