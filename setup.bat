@@ -32,28 +32,30 @@ REM FFmpeg 확인 및 설치
 echo.
 echo [2/4] FFmpeg 확인 중...
 set "FFMPEG_EXE="
-where ffmpeg >nul 2>&1
-if not errorlevel 1 (
+
+REM winget 패키지 폴더에서 ffmpeg.exe 직접 탐색 (PATH 미반영 문제 우회)
+for /r "%LOCALAPPDATA%\Microsoft\WinGet\Packages" %%i in (ffmpeg.exe) do (
+    if "!FFMPEG_EXE!"=="" set "FFMPEG_EXE=%%i"
+)
+
+REM winget에 없으면 PATH에서 탐색
+if "!FFMPEG_EXE!"=="" (
     for /f "tokens=*" %%i in ('where ffmpeg 2^>nul') do (
         if "!FFMPEG_EXE!"=="" set "FFMPEG_EXE=%%i"
     )
-    echo [OK] FFmpeg 이미 설치됨: !FFMPEG_EXE!
+)
+
+if not "!FFMPEG_EXE!"=="" (
+    echo [OK] FFmpeg 발견: !FFMPEG_EXE!
 ) else (
     echo FFmpeg가 없습니다. winget으로 설치합니다...
     winget install --id Gyan.FFmpeg -e --silent
     if errorlevel 1 (
         echo [경고] winget 설치 실패. .env 파일에 FFMPEG_PATH를 직접 입력하세요.
     ) else (
-        echo [OK] FFmpeg 설치 완료
-        REM winget 설치 후 경로 탐색
-        for /f "tokens=*" %%i in ('where ffmpeg 2^>nul') do (
+        echo [OK] FFmpeg 설치 완료. 경로 탐색 중...
+        for /r "%LOCALAPPDATA%\Microsoft\WinGet\Packages" %%i in (ffmpeg.exe) do (
             if "!FFMPEG_EXE!"=="" set "FFMPEG_EXE=%%i"
-        )
-        if "!FFMPEG_EXE!"=="" (
-            REM PATH 미반영 시 winget 패키지 폴더에서 직접 탐색
-            for /r "%LOCALAPPDATA%\Microsoft\WinGet\Packages" %%i in (ffmpeg.exe) do (
-                if "!FFMPEG_EXE!"=="" set "FFMPEG_EXE=%%i"
-            )
         )
     )
 )
@@ -62,12 +64,19 @@ REM Node.js 확인 및 설치
 echo.
 echo [3/4] Node.js 확인 중...
 set "NODE_EXE="
-where node >nul 2>&1
-if not errorlevel 1 (
+
+REM 기본 설치 경로에서 먼저 탐색
+if exist "C:\Program Files\nodejs\node.exe" set "NODE_EXE=C:\Program Files\nodejs\node.exe"
+
+REM PATH에서 탐색
+if "!NODE_EXE!"=="" (
     for /f "tokens=*" %%i in ('where node 2^>nul') do (
         if "!NODE_EXE!"=="" set "NODE_EXE=%%i"
     )
-    echo [OK] Node.js 이미 설치됨: !NODE_EXE!
+)
+
+if not "!NODE_EXE!"=="" (
+    echo [OK] Node.js 발견: !NODE_EXE!
 ) else (
     echo Node.js가 없습니다. winget으로 설치합니다...
     winget install --id OpenJS.NodeJS -e --silent
@@ -75,12 +84,7 @@ if not errorlevel 1 (
         echo [경고] Node.js winget 설치 실패. https://nodejs.org 에서 수동 설치하세요.
     ) else (
         echo [OK] Node.js 설치 완료
-        for /f "tokens=*" %%i in ('where node 2^>nul') do (
-            if "!NODE_EXE!"=="" set "NODE_EXE=%%i"
-        )
-        if "!NODE_EXE!"=="" (
-            if exist "C:\Program Files\nodejs\node.exe" set "NODE_EXE=C:\Program Files\nodejs\node.exe"
-        )
+        if exist "C:\Program Files\nodejs\node.exe" set "NODE_EXE=C:\Program Files\nodejs\node.exe"
     )
 )
 
