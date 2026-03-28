@@ -3,6 +3,7 @@
 # Discord.py - Discord 봇 프레임워크 (음성 지원 포함)
 discord.py==2.7.1
 PyNaCl==1.6.2
+davey==0.1.4
 audioop-lts==0.2.2
 
 # HTTP 클라이언트 라이브러리
