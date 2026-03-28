@@ -29,10 +29,6 @@ Thumbs.db
 # Node
 node_modules/ 
 
-# config 파일
-.config.py
-config.py
-
 #임시 아이콘콘
 .temp_icon
 temp_icon.ico

@@ -66,34 +66,38 @@
 
 ### 1. **필요 조건**
 - Python 3.8 이상
-- FFmpeg (음성 처리용)
-- Discord Bot Token
-- Spotify API 키 (선택사항)
+- Windows 10/11
 
-### 2. **설치**
+### 2. **빠른 설치 (권장)**
 
 ```bash
 # 저장소 클론
-git clone https://github.com/yourusername/discord-music-bot.git
-cd discord-music-bot
+git clone https://github.com/GoodSilver9/smbot.git
+cd smbot/mybot
 
-# 의존성 설치
-pip install -r requirements.txt
-
-# FFmpeg 설치 (Windows)
-# https://ffmpeg.org/download.html에서 다운로드 후 PATH 설정
+# 설치 스크립트 실행 (Python 패키지 + FFmpeg 자동 설치)
+setup.bat
 ```
+
+`setup.bat`이 자동으로 처리합니다:
+- Python 패키지 설치 (`requirements.txt`)
+- FFmpeg 설치 (winget 사용)
+- `.env` 파일 생성
 
 ### 3. **환경 설정**
 
-프로젝트 상위 폴더에 `env_tokens.txt` 파일 생성:
+`setup.bat` 실행 시 `.env` 파일이 자동 생성됩니다. 아래 값을 입력하세요:
 
-```txt
+```env
 DISCORD_BOT_TOKEN=your_discord_bot_token_here
+
+# Spotify 연동 사용 시 (선택사항)
 SPOTIFY_CLIENT_ID=your_spotify_client_id_here
 SPOTIFY_CLIENT_SECRET=your_spotify_client_secret_here
-DEEPSEEK_API_KEY=your_deepseek_api_key_here
 ```
+
+- Discord 토큰: [Discord Developer Portal](https://discord.com/developers/applications)
+- Spotify 키: [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
 
 ### 4. **실행**
 
@@ -101,7 +105,7 @@ DEEPSEEK_API_KEY=your_deepseek_api_key_here
 python bot.py
 ```
 
-또는 GUI로 실행:
+또는 트레이 아이콘으로 실행:
 
 ```bash
 python gui.py
