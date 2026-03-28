@@ -15,7 +15,7 @@ from io import BytesIO
 from PIL import Image, ImageDraw
 from discord.ext import commands
 from discord import ui, ButtonStyle
-from config import create_bot_client, FFMPEG_OPTIONS
+from config import create_bot_client, FFMPEG_OPTIONS, get_ffmpeg_options
 
 # 별도 프로세스 풀 (CPU 집약적 작업용 - yt-dlp)
 # 메인 봇 스레드를 블로킹하지 않음
@@ -55,6 +55,23 @@ def update_all_packages():
 
 # 봇 시작 시 패키지 업데이트 실행
 print("[시스템] 봇 시작 중...")
+
+# ffmpeg, node PATH 자동 추가 (winget 설치 경로 포함)
+def _setup_tool_paths():
+    extra_paths = [
+        # ffmpeg (winget)
+        os.path.expandvars(r'%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin'),
+        # Node.js 기본 설치 경로
+        r'C:\Program Files\nodejs',
+    ]
+    current_path = os.environ.get('PATH', '')
+    for p in extra_paths:
+        if os.path.isdir(p) and p not in current_path:
+            os.environ['PATH'] = p + os.pathsep + current_path
+            print(f"[시스템] PATH 추가: {p}")
+
+_setup_tool_paths()
+
 update_all_packages()
 
 # Token 파일 경로 설정
@@ -308,6 +325,10 @@ async def create_music_player_embed(title, artist="알 수 없는 아티스트",
     return embed
 
 
+# ffmpeg, node 경로 (.env 및 PATH에서 로드)
+_ffmpeg_path = get_ffmpeg_options()['executable']
+_node_path = os.popen('where node 2>nul').read().strip().split('\n')[0] or 'node'
+
 # Youtube-dl 옵션 (403 오류 해결을 위한 개선)
 ydl_opts = {
     'quiet': True,  # 로그 출력 줄이기
@@ -334,7 +355,10 @@ ydl_opts = {
             'player_skip': ['configs'],
             'player_client': ['android', 'web']
         }
-    }
+    },
+    'js_runtimes': {'node': {'path': _node_path}},
+    'remote_components': ['ejs:github'],
+    'ffmpeg_location': _ffmpeg_path,
 }
 
 # 존재하지 않는 명령어 무시 (다른 봇의 prefix와 겹치는 경우 등)
@@ -523,7 +547,7 @@ def extract_video_id_from_url(url):
     return None
 
 def extract_video_id(url):
-    ydl_opts = {'quiet': True, 'no_warnings': True}
+    ydl_opts = {'quiet': True, 'no_warnings': True, 'js_runtimes': {'node': {'path': _node_path}}, 'remote_components': ['ejs:github'], 'ffmpeg_location': _ffmpeg_path}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -549,9 +573,12 @@ async def get_fresh_url(video_id_or_url, max_retries=3):
                 'player_skip': ['configs'],
                 'player_client': ['android', 'web']
             }
-        }
+        },
+        'js_runtimes': {'node': {'path': _node_path}},
+    'remote_components': ['ejs:github'],
+        'ffmpeg_location': _ffmpeg_path,
     }
-    
+
     # video_id인 경우 YouTube URL로 변환
     if video_id_or_url and not video_id_or_url.startswith('http'):
         video_id_or_url = f"https://www.youtube.com/watch?v={video_id_or_url}"
@@ -671,7 +698,10 @@ async def play(ctx, *, search_or_url: str = None):
                 playlist_opts = {
                     'quiet': True,
                     'extract_flat': True,  # 플레이리스트 항목만 추출
-                    'noplaylist': False
+                    'noplaylist': False,
+                    'js_runtimes': {'node': {'path': _node_path}},
+    'remote_components': ['ejs:github'],
+                    'ffmpeg_location': _ffmpeg_path,
                 }
                 
                 # 먼저 플레이리스트 정보만 확인
@@ -1139,6 +1169,9 @@ def _extract_youtube_info_sync(query: str) -> dict:
             }
         },
         'ignoreerrors': True,
+        'js_runtimes': {'node': {'path': _node_path}},
+    'remote_components': ['ejs:github'],
+        'ffmpeg_location': _ffmpeg_path,
     }
     
     try:
