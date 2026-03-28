@@ -15,7 +15,7 @@ from io import BytesIO
 from PIL import Image, ImageDraw
 from discord.ext import commands
 from discord import ui, ButtonStyle
-from config import create_bot_client, FFMPEG_OPTIONS, get_ffmpeg_options
+from config import create_bot_client, FFMPEG_OPTIONS, get_ffmpeg_options, get_node_path
 
 # 별도 프로세스 풀 (CPU 집약적 작업용 - yt-dlp)
 # 메인 봇 스레드를 블로킹하지 않음
@@ -56,17 +56,20 @@ def update_all_packages():
 # 봇 시작 시 패키지 업데이트 실행
 print("[시스템] 봇 시작 중...")
 
-# ffmpeg, node PATH 자동 추가 (winget 설치 경로 포함)
+# ffmpeg, node .env 경로를 PATH에 추가 (터미널 재시작 없이 인식되도록)
 def _setup_tool_paths():
-    extra_paths = [
-        # ffmpeg (winget)
-        os.path.expandvars(r'%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin'),
-        # Node.js 기본 설치 경로
-        r'C:\Program Files\nodejs',
-    ]
+    from config import load_env_config
+    config = load_env_config()
+    paths_to_add = []
+    ffmpeg = config.get('FFMPEG_PATH', '')
+    node = config.get('NODE_PATH', '')
+    if ffmpeg:
+        paths_to_add.append(os.path.dirname(ffmpeg))
+    if node:
+        paths_to_add.append(os.path.dirname(node))
     current_path = os.environ.get('PATH', '')
-    for p in extra_paths:
-        if os.path.isdir(p) and p not in current_path:
+    for p in paths_to_add:
+        if p and os.path.isdir(p) and p not in current_path:
             os.environ['PATH'] = p + os.pathsep + current_path
             print(f"[시스템] PATH 추가: {p}")
 
@@ -325,9 +328,9 @@ async def create_music_player_embed(title, artist="알 수 없는 아티스트",
     return embed
 
 
-# ffmpeg, node 경로 (.env 및 PATH에서 로드)
+# ffmpeg, node 경로 (.env에서 로드)
 _ffmpeg_path = get_ffmpeg_options()['executable']
-_node_path = os.popen('where node 2>nul').read().strip().split('\n')[0] or 'node'
+_node_path = get_node_path()
 
 # Youtube-dl 옵션 (403 오류 해결을 위한 개선)
 ydl_opts = {

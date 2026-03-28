@@ -19,7 +19,7 @@ python --version
 
 REM pip 패키지 설치
 echo.
-echo [1/3] Python 패키지 설치 중...
+echo [1/4] Python 패키지 설치 중...
 pip install -r requirements.txt
 if errorlevel 1 (
     echo [오류] 패키지 설치 실패
@@ -30,42 +30,110 @@ echo [OK] 패키지 설치 완료
 
 REM FFmpeg 확인 및 설치
 echo.
-echo [2/3] FFmpeg 확인 중...
-ffmpeg -version >nul 2>&1
-if errorlevel 1 (
+echo [2/4] FFmpeg 확인 중...
+set "FFMPEG_EXE="
+where ffmpeg >nul 2>&1
+if not errorlevel 1 (
+    for /f "tokens=*" %%i in ('where ffmpeg 2^>nul') do (
+        if "!FFMPEG_EXE!"=="" set "FFMPEG_EXE=%%i"
+    )
+    echo [OK] FFmpeg 이미 설치됨: !FFMPEG_EXE!
+) else (
     echo FFmpeg가 없습니다. winget으로 설치합니다...
     winget install --id Gyan.FFmpeg -e --silent
     if errorlevel 1 (
-        echo [경고] winget 설치 실패. 수동으로 FFmpeg를 설치하세요.
-        echo   1. https://www.gyan.dev/ffmpeg/builds/ 에서 다운로드
-        echo   2. 압축 해제 후 bin 폴더를 PATH에 추가
-        echo   또는 .env 파일에 FFMPEG_PATH=경로\ffmpeg.exe 를 직접 입력하세요.
+        echo [경고] winget 설치 실패. .env 파일에 FFMPEG_PATH를 직접 입력하세요.
     ) else (
-        echo [OK] FFmpeg 설치 완료 (터미널 재시작 후 적용됩니다)
+        echo [OK] FFmpeg 설치 완료
+        REM winget 설치 후 경로 탐색
+        for /f "tokens=*" %%i in ('where ffmpeg 2^>nul') do (
+            if "!FFMPEG_EXE!"=="" set "FFMPEG_EXE=%%i"
+        )
+        if "!FFMPEG_EXE!"=="" (
+            REM PATH 미반영 시 winget 패키지 폴더에서 직접 탐색
+            for /r "%LOCALAPPDATA%\Microsoft\WinGet\Packages" %%i in (ffmpeg.exe) do (
+                if "!FFMPEG_EXE!"=="" set "FFMPEG_EXE=%%i"
+            )
+        )
     )
+)
+
+REM Node.js 확인 및 설치
+echo.
+echo [3/4] Node.js 확인 중...
+set "NODE_EXE="
+where node >nul 2>&1
+if not errorlevel 1 (
+    for /f "tokens=*" %%i in ('where node 2^>nul') do (
+        if "!NODE_EXE!"=="" set "NODE_EXE=%%i"
+    )
+    echo [OK] Node.js 이미 설치됨: !NODE_EXE!
 ) else (
-    echo [OK] FFmpeg 이미 설치됨
-    ffmpeg -version 2>&1 | findstr "ffmpeg version"
+    echo Node.js가 없습니다. winget으로 설치합니다...
+    winget install --id OpenJS.NodeJS -e --silent
+    if errorlevel 1 (
+        echo [경고] Node.js winget 설치 실패. https://nodejs.org 에서 수동 설치하세요.
+    ) else (
+        echo [OK] Node.js 설치 완료
+        for /f "tokens=*" %%i in ('where node 2^>nul') do (
+            if "!NODE_EXE!"=="" set "NODE_EXE=%%i"
+        )
+        if "!NODE_EXE!"=="" (
+            if exist "C:\Program Files\nodejs\node.exe" set "NODE_EXE=C:\Program Files\nodejs\node.exe"
+        )
+    )
 )
 
 REM .env 파일 설정
 echo.
-echo [3/3] 환경 설정 확인 중...
+echo [4/4] 환경 설정 중...
 if not exist ".env" (
     copy ".env.example" ".env" >nul
-    echo [필요] .env 파일이 생성되었습니다.
-    echo.
-    echo !! 중요: .env 파일을 열어 아래 값을 입력하세요 !!
-    echo    DISCORD_BOT_TOKEN = Discord 봇 토큰
-    echo    SPOTIFY_CLIENT_ID = Spotify Client ID (선택)
-    echo    SPOTIFY_CLIENT_SECRET = Spotify Client Secret (선택)
-    echo.
-    echo .env 파일을 메모장으로 열겠습니까? (Y/N)
-    set /p OPEN_ENV=
-    if /i "!OPEN_ENV!"=="Y" notepad .env
-) else (
-    echo [OK] .env 파일 존재 확인
+    echo [OK] .env 파일 생성됨
 )
+
+REM ffmpeg 경로를 .env에 자동 기록
+if not "!FFMPEG_EXE!"=="" (
+    REM 이미 FFMPEG_PATH가 있으면 교체, 없으면 추가
+    python -c "
+import re, sys
+path = sys.argv[1]
+with open('.env', 'r', encoding='utf-8') as f:
+    content = f.read()
+if 'FFMPEG_PATH=' in content:
+    content = re.sub(r'#?\s*FFMPEG_PATH=.*', 'FFMPEG_PATH=' + path, content)
+else:
+    content += '\nFFMPEG_PATH=' + path + '\n'
+with open('.env', 'w', encoding='utf-8') as f:
+    f.write(content)
+print('[OK] FFMPEG_PATH .env에 저장:', path)
+" "!FFMPEG_EXE!"
+)
+
+REM node 경로를 .env에 자동 기록
+if not "!NODE_EXE!"=="" (
+    python -c "
+import re, sys
+path = sys.argv[1]
+with open('.env', 'r', encoding='utf-8') as f:
+    content = f.read()
+if 'NODE_PATH=' in content:
+    content = re.sub(r'#?\s*NODE_PATH=.*', 'NODE_PATH=' + path, content)
+else:
+    content += 'NODE_PATH=' + path + '\n'
+with open('.env', 'w', encoding='utf-8') as f:
+    f.write(content)
+print('[OK] NODE_PATH .env에 저장:', path)
+" "!NODE_EXE!"
+)
+
+echo.
+echo !! 중요: .env 파일을 열어 Discord 봇 토큰을 입력하세요 !!
+echo    DISCORD_BOT_TOKEN = Discord Developer Portal에서 발급
+echo.
+echo .env 파일을 메모장으로 열겠습니까? (Y/N)
+set /p OPEN_ENV=
+if /i "!OPEN_ENV!"=="Y" notepad .env
 
 echo.
 echo ========================================

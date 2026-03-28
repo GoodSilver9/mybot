@@ -72,5 +72,10 @@ def get_ffmpeg_options():
         )
     }
 
+def get_node_path():
+    """Node.js 경로를 환경변수에서 로드합니다."""
+    config = load_env_config()
+    return config.get('NODE_PATH', 'node')
+
 # 기존 호환성을 위한 FFMPEG_OPTIONS
 FFMPEG_OPTIONS = get_ffmpeg_options()
