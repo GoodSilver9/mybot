@@ -1,5 +1,0 @@
-[33m2a8ddc0[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m git status
-[33m968b7fb[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m 봇 토큰 env 작업 및 파일 폴더정리
-[33me439395[m 메세지 출력시 메세지박스추가
-[33mc195399[m url 안에 item 갯수가 너무많으면 에러메세지출력
-[33m4211620[m yt-dlp 업데이트 pip install -U yt-dlp

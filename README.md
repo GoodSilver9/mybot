@@ -101,15 +101,72 @@ SPOTIFY_CLIENT_SECRET=your_spotify_client_secret_here
 
 ### 4. **실행**
 
+#### 포그라운드 (개발용)
+
 ```bash
-python bot.py
+python run.py          # 또는 python -m mybot
+python bot.py          # 레거시 진입점 (gui.py 호환용)
 ```
 
-또는 트레이 아이콘으로 실행:
+#### 백그라운드 (macOS / Linux / Windows 공통)
+
+```bash
+python run.py start    # 데몬화하여 백그라운드 실행 (PID는 .bot.pid)
+python run.py status   # 실행 중 여부 확인
+python run.py stop     # 안전 종료
+```
+
+로그는 `logs/bot.log` (Rotating 5MB×5) 와 `logs/daemon.out` 에 기록됩니다.
+
+#### Windows 트레이 아이콘 (기존 방식)
 
 ```bash
 python gui.py
 ```
+
+---
+
+## 🛠 **아키텍처**
+
+```
+mybot/
+├── run.py                  # 크로스플랫폼 런처 (start/stop/status)
+├── bot.py                  # 레거시 진입점 shim
+├── config.py               # 레거시 호환 shim
+├── spotify_integration.py  # 레거시 호환 shim
+├── gui.py                  # Windows tray (그대로)
+└── src/mybot/
+    ├── bot.py              # MusicBot 클래스
+    ├── __main__.py         # python -m mybot
+    ├── core/
+    │   ├── config.py       # Settings(.env 로더)
+    │   ├── logger.py       # Rotating 로깅
+    │   ├── http.py         # 공유 aiohttp 세션
+    │   ├── state.py        # 길드별 재생 상태
+    │   └── cache.py        # URL TTL 캐시
+    ├── services/
+    │   ├── audio.py        # FFmpeg 소스 빌더
+    │   ├── youtube.py      # yt-dlp 비동기 래퍼
+    │   ├── spotify.py      # Spotify Web API
+    │   ├── emotion_map.py  # 감정 키워드 표
+    │   └── deepseek.py     # DeepSeek 번역/검색
+    ├── ui/
+    │   ├── player.py       # 임베드 + 컨트롤 버튼
+    │   └── selector.py     # 공용 reaction 선택 UI
+    └── cogs/
+        ├── music.py        # play/pause/skip/stop/q/clear/forceplay
+        ├── spotify_cog.py  # mind/sp/ps/similar/auto/autostop/playlist
+        └── language.py     # jp/kr/en/search
+```
+
+**개선점**
+- 길드별 상태 분리 → 같은 봇이 여러 서버에서 독립적으로 재생.
+- 공유 `aiohttp.ClientSession` 으로 커넥션 재사용.
+- DeepSeek API 키 하드코딩 제거 → `DEEPSEEK_API_KEY` 환경변수.
+- 매 실행마다 `pip install -U` 실행하던 부분 제거 (안정성).
+- 표준 `logging` (RotatingFileHandler) — `print` 디버그 메시지 정리.
+- `.mind/.sp/.similar` 의 reaction 선택 코드 60줄×3 → 공용 UI 컴포넌트로 통합.
+- 크로스플랫폼 데몬화 (`run.py start`) — Windows tray 의존성 제거.
 
 ---
 
