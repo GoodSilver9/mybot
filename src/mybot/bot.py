@@ -38,11 +38,11 @@ class MusicBot(commands.Bot):
 
         self.settings: Settings = settings
         self.state: GuildStateRegistry = GuildStateRegistry()
-        self.http: HttpSessionManager = HttpSessionManager()
+        self.http_session: HttpSessionManager = HttpSessionManager()
         self.url_cache: UrlCache = UrlCache(ttl_seconds=settings.url_cache_ttl_seconds)
         self.youtube: YoutubeService = YoutubeService(settings, self.url_cache)
-        self.spotify: SpotifyService = SpotifyService(settings, self.http)
-        self.deepseek: DeepSeekService = DeepSeekService(settings, self.http)
+        self.spotify: SpotifyService = SpotifyService(settings, self.http_session)
+        self.deepseek: DeepSeekService = DeepSeekService(settings, self.http_session)
         self._cleanup_task: Optional[asyncio.Task[None]] = None
 
     async def setup_hook(self) -> None:
@@ -106,7 +106,7 @@ class MusicBot(commands.Bot):
             except Exception as exc:  # noqa: BLE001
                 log.warning("음성 연결 정리 오류: %s", exc)
         self.youtube.shutdown()
-        await self.http.close()
+        await self.http_session.close()
         await super().close()
         log.info("봇 종료 완료")
 
